@@ -15,7 +15,11 @@ Version 0.6.0 rests in a dark **196 × 36-point capsule** near the top of the sc
 
 This version follows [Apple’s AirDrop and material guidance](docs/REFERENCES.md), with system typography, blue action buttons and a format popup. The window adapts to its content: 332 × 228 points when empty, 332 × 272 with one ordinary file, and a taller panel when animation controls are needed.
 
-Version 0.6.0 adds **MOV and MP4 to animated GIF**, including the MOV component exported with a Live Photo. Animation controls appear when the batch contains video. The screenshots above show the established file-conversion interface; they are not evidence of a Live Photo device test.
+Version 0.6.0 adds **MOV and MP4 to animated GIF**, including the MOV component exported with a Live Photo. Animation controls appear when the batch contains video.
+
+<img src="docs/assets/neatpaste-v060-motion-en.jpg" width="332" alt="NeatPaste v0.6.0 on macOS with a paired synthetic photo and MOV, GIF size, frame-rate and loop controls" />
+
+The native screenshot uses a synthetic photo/MOV pair. Native picker intake and conversion were verified; a real iPhone Live Photo export has not yet been device-validated.
 
 ## Conversion matrix
 

@@ -25,7 +25,11 @@ The default 15 fps output distributes 60/70 ms delays and retains the final 50 m
 
 The browser preview was checked in Chinese/light and English/dark appearances. Size, frame rate and loop preferences survived reload. A mixed photo/video batch offered GIF and explained that only the video animates; removing the video restored ordinary image formats and height. The single-video options fit without scroll overflow at the 332 × 360-point animation preset. Idle capsule dimensions are unchanged.
 
-The signed v0.6.0 desktop app's interactive check was initially blocked by the Mac lock screen. Native picker and direct dragging for this release are not yet included in the verified coverage below.
+The signed v0.6.0 desktop app was verified after unlocking the Mac. Its native file picker selected the synthetic `IMG_0001.JPG` and `IMG_0001.MOV` together; the queue displayed one **Live Photo** item with the default **480 px / 15 fps / loop on** options. The native controls were changed to **320 px / 10 fps / loop off**, and conversion completed successfully. An independent Pillow inspection confirmed **320 × 180 pixels, 13 distinct frames, 1,250 ms total delay, no looping extension and 19,124 bytes**. Output SHA256: `f53af0b55ebf31f7126228978cc3c3f688b4a9399f7c9bc5c0a174c9067c0aff`. Both original files retained their pre-conversion SHA256 values. The completed view's Show in Finder action selected the new GIF in the expected export directory.
+
+Collapsing and reopening the completed native view preserved the result and ordinary single-file height. The `native-reopened.png` capture measures 664 × 544 pixels, corresponding to the **332 × 272-point** window; the larger animation-options height did not return.
+
+The local QA captures are `artifacts/qa-v060/native-pair.png`, `native-options.png`, `native-complete.png` and `native-reopened.png`. The published [animation-options image](assets/neatpaste-v060-motion-en.jpg) is a JPEG derived from `native-pair.png`, limited to 664 pixels wide. It shows the real desktop app using synthetic fixtures; it is not a browser mockup or a real iPhone Live Photo export. This verifies native picker intake, explicit pairing, option changes, GIF conversion and completed-view reopening; direct cross-app file dragging remains unverified.
 
 ## Resources and distribution
 
@@ -35,4 +39,4 @@ The signed app's files total **3,959,841 bytes** (about 3.78 MiB); its download 
 
 The helper and app passed strict ad-hoc signature verification. The app ZIP passed CRC checks, and every packaged file byte-matched the signed app. Source archives exclude dependencies, build products and local QA/user files. Release assets include independent SHA256 checksums. Packages are not Developer ID signed or Apple notarized.
 
-A real iPhone Live Photo export, Photos-to-app dragging, global shortcut invocation, Intel hardware, the oldest supported macOS and Windows have not been device-validated. Synthetic MOV/MP4 and explicit-pair tests establish the conversion and filename-pairing behavior; they do not establish direct Photos interoperability or recreation of Photos' Live Photo effects.
+A real iPhone Live Photo export, direct Finder/desktop or Photos-to-app dragging, global shortcut invocation, Intel hardware, the oldest supported macOS and Windows have not been device-validated. Synthetic MOV/MP4, native picker intake and explicit-pair tests establish the conversion and filename-pairing behavior; they do not establish direct Photos interoperability or recreation of Photos' Live Photo effects.
