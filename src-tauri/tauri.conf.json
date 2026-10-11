@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "NeatPaste",
+  "version": "0.4.2",
+  "identifier": "app.neatpaste.desktop",
+  "build": {
+    "beforeDevCommand": "npm run build:native && npm run dev",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build:native && npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "轻贴 · NeatPaste",
+        "width": 208,
+        "height": 48,
+        "visible": false,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "acceptFirstMouse": true,
+        "shadow": false,
+        "backgroundColor": "#00000000"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src ipc: http://ipc.localhost http://127.0.0.1:1420 ws://127.0.0.1:1420; object-src 'none'; base-uri 'self'; frame-ancestors 'none'",
+      "capabilities": ["main"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Productivity",
+    "shortDescription": "Drop files. Choose a format. Keep your originals.",
+    "longDescription": "NeatPaste is a compact, offline desktop island for converting images and simple documents with macOS system frameworks. Drop files onto the capsule and choose an output format. Originals are never overwritten.",
+    "copyright": "Copyright (c) 2026 NeatPaste contributors",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "resources": {"../native/bin/neatpaste-convert": "neatpaste-convert"},
+    "macOS": {
+      "minimumSystemVersion": "13.3"
+    },
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper",
+        "silent": true
+      },
+      "nsis": {
+        "displayLanguageSelector": true,
+        "languages": ["English", "SimpChinese"]
+      }
+    }
+  }
+}
