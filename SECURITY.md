@@ -1,6 +1,6 @@
 # Security and privacy
 
-NeatPaste v0.4.3 processes explicitly dropped or selected files locally. It has no conversion server, account, telemetry, clipboard watcher, or directory scanner. The installed app uses a native Swift conversion helper on demand.
+NeatPaste v0.5.0 processes explicitly dropped or selected files locally. It has no conversion server, account, telemetry, clipboard watcher, or directory scanner. The installed app uses a native Swift conversion helper on demand.
 
 ## Boundary
 

@@ -1,4 +1,4 @@
-# NeatPaste v0.4.2 design
+# NeatPaste v0.5.0 design
 
 The interface is a compact macOS utility. Its [official references](REFERENCES.md) are Apple’s material guidance and AirDrop transfer dialog. A short toolbar, file information, one format popup and a blue action button replace the previous illustration, slogan, format-card grid and full-width call to action. Completion keeps the file context and makes Show in Finder the primary action. English and Chinese use system fonts, 13-point toolbar text and 11–12-point controls and supporting text.
 
@@ -10,7 +10,7 @@ Drag-enter changes feedback without resizing the target; dropping expands it. Th
 
 Optional conversion on drop requires opt-in, a remembered supported format for the file family, at least one new registered file ID and no invalid entries. Removing files or opening an existing batch must not start another conversion. After a completed batch, the next nonempty drop or picker selection replaces that queue; an empty or cancelled picker retains existing results.
 
-The format matrix follows actual system codecs. WebP is decode-only; GIF is static. PDF raster export is page 1 at 144 dpi; text export reflows embedded text without OCR or original layout. CSV/TSV/JSON preserve text cells without inferred headers or numeric types. Relevant caveats appear before conversion and helper warnings remain visible on result rows.
+The format matrix follows actual system codecs. WebP is decode-only; GIF is static. PDF raster export is page 1 at 144 dpi; plain text export reflows embedded text without OCR or original layout. PDF-to-Word adds internal PNG media and DrawingML relationships, mixing editable line blocks with rendered image regions. Complex pages use an explicit full-page-image fallback; text inside those images is not editable. Images never use external relationships. Visible non-link annotations must be flattened before conversion. CSV/TSV/JSON preserve text cells without inferred headers or numeric types. Relevant caveats appear before conversion and helper warnings remain visible on result rows.
 
 Tauri/Rust owns native file grants, queue IDs, output paths and safe publication. A bounded Swift helper uses system frameworks per conversion and then exits. Outputs publish atomically through macOS `renamex_np(RENAME_EXCL)`, numbering collisions. Originals and existing exports are preserved; symlink export folders are rejected. No renderer filesystem permission, remote converter, folder watcher or office runtime is added.
 

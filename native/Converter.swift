@@ -291,34 +291,50 @@ func xmlText(_ text: String) -> String {
     return result
 }
 
-// Minimal standard DOCX: stored ZIP entries avoid extra executables/libraries.
-func docxData(_ text: String) throws -> Data {
+struct DOCXImage {
+    let data: Data
+    let width: CGFloat
+    let height: CGFloat
+}
+
+func textParagraphs(_ text: String) throws -> String {
     guard text.unicodeScalars.allSatisfy({ scalar in
         scalar.value == 9 || scalar.value == 10 || scalar.value == 13 || (scalar.value >= 32 && scalar.value != 0xfffe && scalar.value != 0xffff)
     }) else { try fail("invalidInput") }
-    let paragraphs = text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n").split(separator: "\n", omittingEmptySubsequences: false).map { line in
+    return text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n").split(separator: "\n", omittingEmptySubsequences: false).map { line in
         let runs = line.split(separator: "\t", omittingEmptySubsequences: false).map { "<w:t xml:space=\"preserve\">\(xmlText(String($0)))</w:t>" }.joined(separator: "<w:tab/>")
         return "<w:p><w:r>\(runs)</w:r></w:p>"
     }.joined()
-    let document = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:body>\(paragraphs)<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"880\" w:right=\"880\" w:bottom=\"880\" w:left=\"880\"/></w:sectPr></w:body></w:document>"
-    let files = [
-        ("[Content_Types].xml", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>"),
-        ("_rels/.rels", "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>"),
-        ("word/document.xml", document)
+}
+
+func imageParagraph(_ image: DOCXImage, index: Int) -> String {
+    let scale = min(1, min(507 / image.width, 700 / image.height))
+    let width = max(1, Int((image.width * scale * 12_700).rounded()))
+    let height = max(1, Int((image.height * scale * 12_700).rounded()))
+    return "<w:p><w:r><w:drawing><wp:inline distT=\"0\" distB=\"0\" distL=\"0\" distR=\"0\"><wp:extent cx=\"\(width)\" cy=\"\(height)\"/><wp:docPr id=\"\(index)\" name=\"PDF image \(index)\"/><wp:cNvGraphicFramePr><a:graphicFrameLocks noChangeAspect=\"1\"/></wp:cNvGraphicFramePr><a:graphic><a:graphicData uri=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><pic:pic><pic:nvPicPr><pic:cNvPr id=\"\(index)\" name=\"image\(index).png\"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed=\"rIdImage\(index)\"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x=\"0\" y=\"0\"/><a:ext cx=\"\(width)\" cy=\"\(height)\"/></a:xfrm><a:prstGeom prst=\"rect\"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>"
+}
+
+// Standard DOCX package. Binary PNG entries use system zlib's fast CRC32.
+func docxArchive(body: String, images: [DOCXImage] = []) throws -> Data {
+    let document = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?><w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" xmlns:wp=\"http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing\" xmlns:a=\"http://schemas.openxmlformats.org/drawingml/2006/main\" xmlns:pic=\"http://schemas.openxmlformats.org/drawingml/2006/picture\"><w:body>\(body)<w:sectPr><w:pgSz w:w=\"11906\" w:h=\"16838\"/><w:pgMar w:top=\"880\" w:right=\"880\" w:bottom=\"880\" w:left=\"880\"/></w:sectPr></w:body></w:document>"
+    let imageType = images.isEmpty ? "" : "<Default Extension=\"png\" ContentType=\"image/png\"/>"
+    var files: [(String, Data)] = [
+        ("[Content_Types].xml", Data("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/>\(imageType)<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/></Types>".utf8)),
+        ("_rels/.rels", Data("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"word/document.xml\"/></Relationships>".utf8)),
+        ("word/document.xml", Data(document.utf8))
     ]
+    if !images.isEmpty {
+        let relationships = images.indices.map { "<Relationship Id=\"rIdImage\($0 + 1)\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"media/image\($0 + 1).png\"/>" }.joined()
+        files.append(("word/_rels/document.xml.rels", Data("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\">\(relationships)</Relationships>".utf8)))
+        for (index, image) in images.enumerated() { files.append(("word/media/image\(index + 1).png", image.data)) }
+    }
+    guard files.reduce(0, { $0 + $1.1.count }) <= 40 * 1024 * 1024 else { try fail("pdfImageLimit") }
     var archive = Data(), central = Data()
     func append16(_ number: Int, to data: inout Data) { data.append(UInt8(number & 255)); data.append(UInt8((number >> 8) & 255)) }
     func append32(_ number: Int, to data: inout Data) { append16(number & 0xffff, to: &data); append16((number >> 16) & 0xffff, to: &data) }
-    func crc32(_ bytes: Data) -> Int {
-        var crc: UInt32 = 0xffffffff
-        for byte in bytes {
-            crc ^= UInt32(byte)
-            for _ in 0..<8 { crc = (crc >> 1) ^ (crc & 1 == 1 ? 0xedb88320 : 0) }
-        }
-        return Int(crc ^ 0xffffffff)
-    }
-    for (name, content) in files {
-        let path = Data(name.utf8), bytes = Data(content.utf8), crc = crc32(bytes), offset = archive.count
+    for (name, bytes) in files {
+        let path = Data(name.utf8), offset = archive.count
+        let crc = bytes.withUnsafeBytes { Int(crc32(0, $0.baseAddress?.assumingMemoryBound(to: UInt8.self), uInt($0.count))) }
         append32(0x04034b50, to: &archive)
         for number in [20, 0, 0, 0, 33] { append16(number, to: &archive) }
         for number in [crc, bytes.count, bytes.count] { append32(number, to: &archive) }
@@ -336,6 +352,340 @@ func docxData(_ text: String) throws -> Data {
     for number in [0, 0, files.count, files.count] { append16(number, to: &archive) }
     append32(central.count, to: &archive); append32(centralOffset, to: &archive); append16(0, to: &archive)
     return archive
+}
+
+func docxData(_ text: String) throws -> Data { try docxArchive(body: textParagraphs(text)) }
+
+struct PDFGraphicsState {
+    var matrix = CGAffineTransform.identity
+    var clip: CGRect
+    var whiteFill = false
+    var fillComponents = 1
+}
+final class PDFScanState {
+    var graphics: PDFGraphicsState
+    var stack: [PDFGraphicsState] = []
+    var path = CGRect.null
+    var boxes: [CGRect] = []
+    var fallback = false
+    var limitExceeded = false
+    var invalidGeometry = false
+    var depth: Int
+    var operators = 0
+    let pageRect: CGRect
+    init(pageRect: CGRect, graphics: PDFGraphicsState? = nil, depth: Int = 0) {
+        self.pageRect = pageRect; self.graphics = graphics ?? PDFGraphicsState(clip: pageRect); self.depth = depth
+    }
+    func tick(_ scanner: CGPDFScannerRef) -> Bool {
+        operators += 1
+        if operators > 200_000 || boxes.count > 500 || stack.count > 256 { limitExceeded = true; CGPDFScannerStop(scanner); return false }
+        return true
+    }
+}
+func pdfScanState(_ info: UnsafeMutableRawPointer?) -> PDFScanState { Unmanaged<PDFScanState>.fromOpaque(info!).takeUnretainedValue() }
+func finitePDFTransform(_ matrix: CGAffineTransform) -> Bool { [matrix.a, matrix.b, matrix.c, matrix.d, matrix.tx, matrix.ty].allSatisfy { $0.isFinite } }
+func finitePDFRect(_ rect: CGRect) -> Bool { [rect.origin.x, rect.origin.y, rect.width, rect.height, rect.maxX, rect.maxY].allSatisfy { $0.isFinite } }
+func pdfNumbers(_ scanner: CGPDFScannerRef, _ count: Int) -> [CGFloat]? {
+    var values = [CGPDFReal](repeating: 0, count: count)
+    for index in stride(from: count - 1, through: 0, by: -1) { guard CGPDFScannerPopNumber(scanner, &values[index]), values[index].isFinite else { return nil } }
+    return values
+}
+func pdfArrayRect(_ dictionary: CGPDFDictionaryRef, key: String) -> CGRect? {
+    var array: CGPDFArrayRef?
+    guard CGPDFDictionaryGetArray(dictionary, key, &array), let array, CGPDFArrayGetCount(array) == 4 else { return nil }
+    var values = [CGPDFReal](repeating: 0, count: 4)
+    for index in 0..<4 { guard CGPDFArrayGetNumber(array, index, &values[index]), values[index].isFinite else { return nil } }
+    let rect = CGRect(x: values[0], y: values[1], width: values[2] - values[0], height: values[3] - values[1]).standardized
+    return finitePDFRect(rect) ? rect : nil
+}
+func pdfPathPoints(_ scanner: CGPDFScannerRef, _ info: UnsafeMutableRawPointer?, count: Int) {
+    let state = pdfScanState(info)
+    guard state.tick(scanner), let values = pdfNumbers(scanner, count) else { state.fallback = true; return }
+    for index in stride(from: 0, to: count, by: 2) {
+        let point = CGPoint(x: values[index], y: values[index + 1]).applying(state.graphics.matrix)
+        state.path = state.path.union(CGRect(x: point.x, y: point.y, width: 0.001, height: 0.001))
+    }
+}
+func pdfPathPaint(_ scanner: CGPDFScannerRef, _ info: UnsafeMutableRawPointer?, stroke: Bool) {
+    let state = pdfScanState(info)
+    guard state.tick(scanner) else { return }
+    // A plain white page background does not need to become an image block.
+    let background = state.graphics.whiteFill && !stroke && state.path.insetBy(dx: -1, dy: -1).contains(state.pageRect)
+    if !state.path.isNull && !background { state.fallback = true }
+    state.path = .null
+}
+func scanPDFContent(_ content: CGPDFContentStreamRef, state: PDFScanState) -> Bool {
+    guard state.depth < 16 else { state.limitExceeded = true; return false }
+    let table = CGPDFOperatorTableCreate()!
+    defer { CGPDFOperatorTableRelease(table) }
+    CGPDFOperatorTableSetCallback(table, "q") { scanner, info in let s = pdfScanState(info); if s.tick(scanner) { s.stack.append(s.graphics) } }
+    CGPDFOperatorTableSetCallback(table, "Q") { scanner, info in let s = pdfScanState(info); if s.tick(scanner), let saved = s.stack.popLast() { s.graphics = saved } }
+    CGPDFOperatorTableSetCallback(table, "cm") { scanner, info in
+        let s = pdfScanState(info)
+        guard s.tick(scanner), let v = pdfNumbers(scanner, 6) else { s.fallback = true; return }
+        s.graphics.matrix = CGAffineTransform(a: v[0], b: v[1], c: v[2], d: v[3], tx: v[4], ty: v[5]).concatenating(s.graphics.matrix)
+        if !finitePDFTransform(s.graphics.matrix) { s.invalidGeometry = true; CGPDFScannerStop(scanner) }
+    }
+    CGPDFOperatorTableSetCallback(table, "g") { scanner, info in let s = pdfScanState(info); s.graphics.whiteFill = (pdfNumbers(scanner, 1)?.first ?? 0) >= 0.999 }
+    CGPDFOperatorTableSetCallback(table, "rg") { scanner, info in let s = pdfScanState(info); s.graphics.whiteFill = pdfNumbers(scanner, 3)?.allSatisfy { $0 >= 0.999 } ?? false }
+    CGPDFOperatorTableSetCallback(table, "k") { scanner, info in let s = pdfScanState(info); s.graphics.whiteFill = pdfNumbers(scanner, 4)?.allSatisfy { $0 <= 0.001 } ?? false }
+    CGPDFOperatorTableSetCallback(table, "cs") { scanner, info in
+        let s = pdfScanState(info)
+        guard s.tick(scanner) else { return }
+        s.graphics.whiteFill = false; s.graphics.fillComponents = 0
+        var name: UnsafePointer<CChar>?
+        guard CGPDFScannerPopName(scanner, &name), let name else { s.fallback = true; return }
+        switch String(cString: name) {
+        case "DeviceGray": s.graphics.fillComponents = 1
+        case "DeviceRGB": s.graphics.fillComponents = 3
+        case "DeviceCMYK": s.graphics.fillComponents = 4
+        case "Pattern": s.graphics.fillComponents = -1
+        default:
+            let parent = CGPDFScannerGetContentStream(scanner)
+            guard let object = CGPDFContentStreamGetResource(parent, "ColorSpace", name) else { return }
+            var array: CGPDFArrayRef?, kind: UnsafePointer<CChar>?
+            guard CGPDFObjectGetValue(object, .array, &array), let array, CGPDFArrayGetName(array, 0, &kind), let kind else { return }
+            switch String(cString: kind) {
+            case "CalGray": s.graphics.fillComponents = 1
+            case "CalRGB": s.graphics.fillComponents = 3
+            case "Pattern": s.graphics.fillComponents = -1
+            case "ICCBased":
+                var profile: CGPDFStreamRef?, count = 0
+                if CGPDFArrayGetStream(array, 1, &profile), let profile, let dictionary = CGPDFStreamGetDictionary(profile), CGPDFDictionaryGetInteger(dictionary, "N", &count), [1, 3, 4].contains(count) { s.graphics.fillComponents = count }
+            default: break
+            }
+        }
+    }
+    for op in ["sc", "scn"] { CGPDFOperatorTableSetCallback(table, op) { scanner, info in
+        let s = pdfScanState(info)
+        guard s.tick(scanner) else { return }
+        s.graphics.whiteFill = false
+        if s.graphics.fillComponents == -1 { s.fallback = true; return }
+        if s.graphics.fillComponents > 0, let values = pdfNumbers(scanner, s.graphics.fillComponents) {
+            s.graphics.whiteFill = s.graphics.fillComponents == 4 ? values.allSatisfy { $0 <= 0.001 } : values.allSatisfy { $0 >= 0.999 }
+        }
+    } }
+    CGPDFOperatorTableSetCallback(table, "re") { scanner, info in
+        let s = pdfScanState(info)
+        guard s.tick(scanner), let v = pdfNumbers(scanner, 4) else { s.fallback = true; return }
+        s.path = s.path.union(CGRect(x: v[0], y: v[1], width: v[2], height: v[3]).applying(s.graphics.matrix).standardized)
+    }
+    for op in ["m", "l"] { CGPDFOperatorTableSetCallback(table, op) { scanner, info in pdfPathPoints(scanner, info, count: 2) } }
+    CGPDFOperatorTableSetCallback(table, "c") { scanner, info in pdfPathPoints(scanner, info, count: 6) }
+    for op in ["v", "y"] { CGPDFOperatorTableSetCallback(table, op) { scanner, info in pdfPathPoints(scanner, info, count: 4) } }
+    for op in ["f", "F", "f*"] { CGPDFOperatorTableSetCallback(table, op) { scanner, info in pdfPathPaint(scanner, info, stroke: false) } }
+    for op in ["S", "s", "B", "B*", "b", "b*"] { CGPDFOperatorTableSetCallback(table, op) { scanner, info in pdfPathPaint(scanner, info, stroke: true) } }
+    for op in ["W", "W*"] { CGPDFOperatorTableSetCallback(table, op) { scanner, info in
+        let s = pdfScanState(info); _ = s.tick(scanner)
+        if !s.path.isNull { s.graphics.clip = s.graphics.clip.intersection(s.path) }
+    } }
+    CGPDFOperatorTableSetCallback(table, "n") { _, info in pdfScanState(info).path = .null }
+    // Inline images, shadings and pattern fills are preserved as a whole page.
+    for op in ["BI", "ID", "EI", "sh"] { CGPDFOperatorTableSetCallback(table, op) { scanner, info in let s = pdfScanState(info); _ = s.tick(scanner); s.fallback = true } }
+    for op in ["BT", "ET", "Tj", "TJ", "'", "\"", "Tm", "Td", "TD", "T*", "Tf", "Tc", "Tw", "Tz", "TL", "Tr", "Ts", "gs", "CS", "SC", "SCN", "G", "RG", "K", "w", "J", "j", "M", "d", "ri", "i", "h", "BMC", "BDC", "EMC", "MP", "DP"] {
+        CGPDFOperatorTableSetCallback(table, op) { scanner, info in _ = pdfScanState(info).tick(scanner) }
+    }
+    CGPDFOperatorTableSetCallback(table, "Do") { scanner, info in
+        let s = pdfScanState(info)
+        guard s.tick(scanner) else { return }
+        var name: UnsafePointer<CChar>?
+        guard CGPDFScannerPopName(scanner, &name), let name else { s.fallback = true; return }
+        let parent = CGPDFScannerGetContentStream(scanner)
+        guard let object = CGPDFContentStreamGetResource(parent, "XObject", name) else { s.fallback = true; return }
+        var stream: CGPDFStreamRef?
+        guard CGPDFObjectGetValue(object, .stream, &stream), let stream, let dictionary = CGPDFStreamGetDictionary(stream) else { s.fallback = true; return }
+        var subtype: UnsafePointer<CChar>?
+        guard CGPDFDictionaryGetName(dictionary, "Subtype", &subtype), let subtype else { s.fallback = true; return }
+        switch String(cString: subtype) {
+        case "Image":
+            let transformed = CGRect(x: 0, y: 0, width: 1, height: 1).applying(s.graphics.matrix).standardized
+            guard finitePDFRect(transformed) else { s.invalidGeometry = true; CGPDFScannerStop(scanner); return }
+            let rect = transformed.intersection(s.graphics.clip)
+            if !rect.isNull && rect.width > 0 && rect.height > 0 { s.boxes.append(rect) }
+        case "Form":
+            guard s.depth < 15 else { s.limitExceeded = true; CGPDFScannerStop(scanner); return }
+            var graphics = s.graphics
+            var array: CGPDFArrayRef?
+            if CGPDFDictionaryGetArray(dictionary, "Matrix", &array), let array {
+                guard CGPDFArrayGetCount(array) == 6 else { s.invalidGeometry = true; CGPDFScannerStop(scanner); return }
+                var v = [CGPDFReal](repeating: 0, count: 6)
+                for index in 0..<6 { guard CGPDFArrayGetNumber(array, index, &v[index]), v[index].isFinite else { s.fallback = true; return } }
+                graphics.matrix = CGAffineTransform(a: v[0], b: v[1], c: v[2], d: v[3], tx: v[4], ty: v[5]).concatenating(graphics.matrix)
+                guard finitePDFTransform(graphics.matrix) else { s.invalidGeometry = true; CGPDFScannerStop(scanner); return }
+            }
+            guard let bounds = pdfArrayRect(dictionary, key: "BBox"), finitePDFRect(bounds.applying(graphics.matrix)) else { s.invalidGeometry = true; CGPDFScannerStop(scanner); return }
+            graphics.clip = graphics.clip.intersection(bounds.applying(graphics.matrix))
+            var resources: CGPDFDictionaryRef?
+            CGPDFDictionaryGetDictionary(dictionary, "Resources", &resources)
+            let child = CGPDFContentStreamCreateWithStream(stream, resources ?? dictionary, parent)
+            defer { CGPDFContentStreamRelease(child) }
+            let childState = PDFScanState(pageRect: s.pageRect, graphics: graphics, depth: s.depth + 1)
+            if !scanPDFContent(child, state: childState) { s.fallback = true }
+            s.fallback = s.fallback || childState.fallback
+            s.boxes.append(contentsOf: childState.boxes); s.operators += childState.operators
+            s.limitExceeded = s.limitExceeded || childState.limitExceeded
+            s.invalidGeometry = s.invalidGeometry || childState.invalidGeometry
+            if s.limitExceeded || s.invalidGeometry || !s.tick(scanner) { CGPDFScannerStop(scanner) }
+        default: s.fallback = true
+        }
+    }
+    let scanner = CGPDFScannerCreate(content, table, Unmanaged.passUnretained(state).toOpaque())
+    defer { CGPDFScannerRelease(scanner) }
+    let success = CGPDFScannerScan(scanner)
+    return success && !state.fallback
+}
+
+struct PDFRaster { let image: CGImage; let transform: CGAffineTransform; let bounds: CGRect }
+func renderPDFPage(_ page: CGPDFPage, totalPixels: inout Int) throws -> PDFRaster {
+    let crop = page.getBoxRect(.cropBox)
+    let rotated = abs(page.rotationAngle) % 180 != 0
+    let width = ceil((rotated ? crop.height : crop.width) * 2), height = ceil((rotated ? crop.width : crop.height) * 2)
+    guard width.isFinite, height.isFinite, width > 0, height > 0, width * height <= CGFloat(pixelLimit) else { try fail("pdfImageLimit") }
+    totalPixels += Int(width * height)
+    guard totalPixels <= 200_000_000 else { try fail("pdfImageLimit") }
+    guard let context = CGContext(data: nil, width: Int(width), height: Int(height), bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { try fail("conversionFailed") }
+    let bounds = CGRect(x: 0, y: 0, width: width, height: height)
+    // CoreGraphics may decline to upscale a PDF in getDrawingTransform. Apply
+    // the 2x raster scale explicitly so PNG pixels and Word point sizes agree.
+    let pointBounds = CGRect(x: 0, y: 0, width: width / 2, height: height / 2)
+    let transform = page.getDrawingTransform(.cropBox, rect: pointBounds, rotate: 0, preserveAspectRatio: true).concatenating(CGAffineTransform(scaleX: 2, y: 2))
+    context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fill(bounds)
+    context.concatenate(transform); context.drawPDFPage(page)
+    guard let image = context.makeImage() else { try fail("conversionFailed") }
+    return PDFRaster(image: image, transform: transform, bounds: bounds)
+}
+func pdfCroppedImage(_ raster: PDFRaster, rect: CGRect) throws -> DOCXImage {
+    let transformed = rect.applying(raster.transform).standardized.intersection(raster.bounds)
+    // CGImage crops count rows from the top; PDF user-space Y increases upward.
+    let crop = CGRect(x: transformed.minX, y: raster.bounds.height - transformed.maxY, width: transformed.width, height: transformed.height).integral.intersection(raster.bounds)
+    guard !crop.isNull, crop.width >= 1, crop.height >= 1, let image = raster.image.cropping(to: crop) else { try fail("conversionFailed") }
+    let output = NSMutableData()
+    guard let destination = CGImageDestinationCreateWithData(output as CFMutableData, UTType.png.identifier as CFString, 1, nil) else { try fail("conversionFailed") }
+    CGImageDestinationAddImage(destination, image, nil)
+    guard CGImageDestinationFinalize(destination) else { try fail("conversionFailed") }
+    return DOCXImage(data: output as Data, width: crop.width / 2, height: crop.height / 2)
+}
+func mergedImageRects(_ input: [CGRect]) -> [CGRect] {
+    var output: [CGRect] = []
+    for original in input {
+        var rect = original
+        var index = 0
+        while index < output.count {
+            if rect.intersects(output[index]) { rect = rect.union(output.remove(at: index)); index = 0 }
+            else { index += 1 }
+        }
+        output.append(rect)
+    }
+    return output
+}
+func mergedPDFTextLines(_ input: [(CGRect, String)]) -> [(CGRect, String)] {
+    // PDFKit can split one baseline into several selections at font changes.
+    // Group against a fixed row baseline, then join adjacent fragments in X order.
+    let sorted = input.sorted { $0.0.midY == $1.0.midY ? $0.0.minX < $1.0.minX : $0.0.midY > $1.0.midY }
+    var rows: [(baseline: CGFloat, height: CGFloat, fragments: [(CGRect, String)])] = []
+    for item in sorted {
+        if let index = rows.lastIndex(where: { abs($0.baseline - item.0.midY) <= max(2, min($0.height, item.0.height) * 0.3) }) {
+            rows[index].fragments.append(item)
+        } else { rows.append((item.0.midY, item.0.height, [item])) }
+    }
+    var output: [(CGRect, String)] = []
+    for row in rows {
+        for fragment in row.fragments.sorted(by: { $0.0.minX < $1.0.minX }) {
+            if let last = output.last, abs(last.0.midY - row.baseline) <= max(2, row.height * 0.3), fragment.0.minX - last.0.maxX < max(18, row.height * 2) {
+                let gap = fragment.0.minX - last.0.maxX
+                let separator = gap > row.height * 0.2 && !last.1.hasSuffix(" ") && !fragment.1.hasPrefix(" ") ? " " : ""
+                output[output.count - 1] = (last.0.union(fragment.0), last.1 + separator + fragment.1)
+            } else { output.append(fragment) }
+        }
+    }
+    return output
+}
+func pdfDOCXData(_ url: URL, warnings: inout [String]) throws -> Data {
+    guard let pdf = CGPDFDocument(url as CFURL), let selectable = PDFDocument(url: url) else { try fail("invalidInput") }
+    guard pdf.isUnlocked, !selectable.isLocked else { try fail("passwordProtected") }
+    guard pdf.numberOfPages > 0 else { try fail("invalidInput") }
+    guard pdf.numberOfPages <= pageLimit else { try fail("tooManyPages") }
+    var body = "", images: [DOCXImage] = [], totalPixels = 0, totalBytes = 0, textLength = 0
+    var fallbackUsed = false, textInImages = false
+    for pageNumber in 1...pdf.numberOfPages {
+        try autoreleasepool {
+            guard let page = pdf.page(at: pageNumber), let textPage = selectable.page(at: pageNumber - 1) else { try fail("invalidInput") }
+            let crop = page.getBoxRect(.cropBox)
+            guard finitePDFRect(crop), crop.width > 0, crop.height > 0 else { try fail("invalidInput") }
+            let state = PDFScanState(pageRect: crop)
+            let content = CGPDFContentStreamCreateWithPage(page)
+            defer { CGPDFContentStreamRelease(content) }
+            let scanned = scanPDFContent(content, state: state)
+            guard !state.limitExceeded else { try fail("pdfImageLimit") }
+            guard !state.invalidGeometry else { try fail("invalidInput") }
+            // Non-link annotation appearances are not part of the page stream.
+            // Refuse rather than silently omit a stamp, signature or attached image.
+            guard !textPage.annotations.contains(where: { $0.type != "Link" && $0.shouldDisplay }) else { try fail("pdfUnsupportedAnnotation") }
+            let pageText = textPage.string ?? ""
+            textLength += pageText.utf16.count
+            guard textLength <= textLimit else { try fail("textTooLong") }
+            let selections = textPage.selection(for: crop)?.selectionsByLine() ?? []
+            var lines = selections.compactMap { selection -> (CGRect, String)? in
+                guard let text = selection.string, !text.isEmpty else { return nil }
+                let bounds = selection.bounds(for: textPage)
+                guard !bounds.isNull, bounds.width > 0, bounds.height > 0, bounds.origin.x.isFinite, bounds.origin.y.isFinite, bounds.width.isFinite, bounds.height.isFinite else { return nil }
+                return (bounds, text)
+            }
+            var rects = mergedImageRects(state.boxes.map { $0.intersection(crop) }.filter { !$0.isNull && $0.width > 0 && $0.height > 0 })
+            let visibleText = textPage.selection(for: crop)?.string ?? ""
+            let covered = lines.map { $0.1 }.joined().unicodeScalars.filter { !CharacterSet.whitespacesAndNewlines.contains($0) }.sorted { $0.value < $1.value }
+            let expected = visibleText.unicodeScalars.filter { !CharacterSet.whitespacesAndNewlines.contains($0) }.sorted { $0.value < $1.value }
+            let fallback = !scanned || covered != expected || (!pageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && lines.isEmpty)
+            lines = mergedPDFTextLines(lines)
+            if fallback {
+                rects = [crop]; lines = []; fallbackUsed = true
+            } else if rects.isEmpty && pageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                // Empty/vector-only/scanned pages must remain present in Word.
+                rects = [crop]; fallbackUsed = true
+            }
+            if !fallback && !rects.isEmpty {
+                // A crop includes all visible paint inside it. Keep overlapping text
+                // in that image instead of repeating it as an editable paragraph.
+                var changed = true
+                while changed {
+                    changed = false
+                    var retained: [(CGRect, String)] = []
+                    for line in lines {
+                        if let index = rects.firstIndex(where: { $0.intersects(line.0) }) {
+                            rects[index] = rects[index].union(line.0).intersection(crop); textInImages = true; changed = true
+                        } else { retained.append(line) }
+                    }
+                    lines = retained; rects = mergedImageRects(rects)
+                }
+            }
+            if pageNumber > 1 { body += "<w:p><w:r><w:br w:type=\"page\"/></w:r></w:p>" }
+            let raster = rects.isEmpty ? nil : try renderPDFPage(page, totalPixels: &totalPixels)
+            let ordering = page.getDrawingTransform(.cropBox, rect: CGRect(x: 0, y: 0, width: abs(page.rotationAngle) % 180 == 0 ? crop.width : crop.height, height: abs(page.rotationAngle) % 180 == 0 ? crop.height : crop.width), rotate: 0, preserveAspectRatio: true)
+            let unsorted = lines.map { (rect: $0.0, text: Optional($0.1)) } + rects.map { (rect: $0, text: Optional<String>.none) }
+            var blocks = unsorted.enumerated().map { (rect: $0.element.rect, text: $0.element.text, index: $0.offset) }
+            blocks.sort { a, b in
+                let first = a.rect.applying(ordering), second = b.rect.applying(ordering)
+                let firstRow = (first.maxY / 3).rounded(), secondRow = (second.maxY / 3).rounded()
+                if firstRow != secondRow { return firstRow > secondRow }
+                if first.minX != second.minX { return first.minX < second.minX }
+                return a.index < b.index
+            }
+            for block in blocks {
+                if let text = block.text { body += try textParagraphs(text) }
+                else if let raster {
+                    guard images.count < 500 else { try fail("pdfImageLimit") }
+                    let image = try pdfCroppedImage(raster, rect: block.rect)
+                    totalBytes += image.data.count
+                    guard totalBytes <= 40 * 1024 * 1024 else { try fail("pdfImageLimit") }
+                    images.append(image); body += imageParagraph(image, index: images.count)
+                }
+            }
+        }
+    }
+    warnings.append(images.isEmpty ? "pdfTextReflow" : "pdfImagesReflow")
+    if fallbackUsed { warnings.append("pdfVisualFallback") }
+    if textInImages { warnings.append("pdfTextInImages") }
+    return try docxArchive(body: body, images: images)
 }
 
 func richTextData(_ text: String) -> Data {
@@ -522,6 +872,9 @@ func convert(_ request: Request) throws -> Reply {
     if table { data = try tableOutput(input, ext: ext, format: request.format, warnings: &warnings) }
     else if image { data = try imageOutput(input, format: request.format, warnings: &warnings) }
     else if ext == "pdf" && ["png", "jpg"].contains(request.format) { data = try pdfImageOutput(input, format: request.format, warnings: &warnings) }
+    else if ext == "pdf" && request.format == "docx" {
+        data = try pdfDOCXData(input, warnings: &warnings)
+    }
     else {
         let text = try documentText(input, ext: ext, warnings: &warnings)
         if request.format != "txt" || ext == "docx" { warnings.append("simpleReflow") }

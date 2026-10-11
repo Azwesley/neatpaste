@@ -75,6 +75,7 @@ Object.assign(copy.en, {
 Object.assign(copy.zh, {
   subtitle:'本地文件转换', dropHere:'拖入转换', emptyTitle:'拖入文件', idleSub:'图片、文档或表格',
   pick:'选择文件…', preview:'查看示例', previewLabel:'界面预览 · 转换请打开 Mac 版',
+  pdfWordNote:'文字可编辑、图片内嵌；复杂页保留为图片。', pdfImagesReflow:'图片已内嵌，图文重新排版。', pdfVisualFallback:'复杂页面已作为整页图片保留，其中的文字无法直接编辑。', pdfTextInImages:'图片上重叠的文字已保留在图片中，无法单独编辑。', pdfImageLimit:'PDF 图片内容超过处理限制，请拆分文件后再试。', pdfUnsupportedAnnotation:'此 PDF 含暂不支持的可见批注。请先将批注合并到 PDF 页面后再试。',
   selection:'不可用', output:'格式', convert:'转换', keep:'保留原件', readyDone:'转换完成', release:'松开以添加文件',
   panelTitle:'文件转换', doneTitle:'转换完成', partialTitle:'部分完成', failedTitle:'转换未完成',
   success:'个已完成', queue:'文件', clear:'清空', done:'完成', settings:'设置',
@@ -87,6 +88,7 @@ Object.assign(copy.zh, {
 Object.assign(copy.en, {
   subtitle:'Local file conversion', dropHere:'Drop to convert', emptyTitle:'Drop files here', idleSub:'Images, documents or tables',
   pick:'Choose Files…', preview:'Try a sample', previewLabel:'Preview · Convert in the Mac app',
+  pdfWordNote:'Text + images; complex pages stay images.', pdfImagesReflow:'Embedded images; text reflowed.', pdfVisualFallback:'Complex pages were kept as full-page images; their text is not editable.', pdfTextInImages:'Text overlapping images stays inside those images and is not separately editable.', pdfImageLimit:'PDF image content exceeds processing limits. Split the file and try again.', pdfUnsupportedAnnotation:'This PDF has unsupported visible annotations. Flatten them into the PDF pages first.',
   selection:'Unavailable', output:'Format', convert:'Convert', keep:'Keep originals', readyDone:'Converted', release:'Release to add files',
   panelTitle:'Convert Files', doneTitle:'Conversion complete', partialTitle:'Partially complete', failedTitle:'Conversion incomplete',
   success:'converted', queue:'Files', clear:'Clear', done:'Done', settings:'Settings',
@@ -181,7 +183,7 @@ function settingsContent() {
       <button class="park-button" id="park" ${!native?'disabled':''}>${t('park')}${icon('up')}</button>
       <p class="shortcut-status">${t(state.shortcut?.available?'shortcutOkay':native?'shortcutFailed':'previewLabel')}</p>
       <details><summary>${t('supportTitle')}</summary><p>${t('support')}</p><p>${t('privacy')}</p></details>
-      <footer><span>NeatPaste</span><span>0.4.3</span></footer>
+      <footer><span>NeatPaste</span><span>0.5.0</span></footer>
     </div>
   </dialog>`;
 }
@@ -203,7 +205,7 @@ function render() {
   document.title=`${t('name')} · ${t('subtitle')}`;
   $('#app').style.setProperty('--expanded-height',`${layouts[desiredLayout]}px`);
   const status = state.drag?t('release'):state.busy?`${t('busy')} ${state.progress}/${state.total}`:finished?(summary.failed?t('needsAttention'):t('readyDone')):state.files.length?`${state.files.length} ${t('files')}`:t('dropHere');
-  const note = family()==='data' ? 'dataNote' : allImages ? state.format==='pdf'?'imagePDFNote':['jpg','heic','bmp','gif'].includes(state.format)?'opaqueNote':'imageNote' : usable.some(f=>f.ext==='pdf') ? ['png','jpg'].includes(state.format)?'pdfImageNote':'pdfNote' : 'docsNote';
+  const note = family()==='data' ? 'dataNote' : allImages ? state.format==='pdf'?'imagePDFNote':['jpg','heic','bmp','gif'].includes(state.format)?'opaqueNote':'imageNote' : usable.some(f=>f.ext==='pdf') ? ['png','jpg'].includes(state.format)?'pdfImageNote':state.format==='docx'?'pdfWordNote':'pdfNote' : 'docsNote';
   $('#app').innerHTML=`<section class="island ${state.expanded?'expanded':'compact'} ${empty?'is-empty':''} ${finished?'is-finished':''} ${state.drag?'drag-over':''} ${state.busy?'working':''}" data-layout="${desiredLayout}" aria-label="${t('name')}">
     <header class="island-header">
       <span class="signal ${finished?(summary.failed?'warning':'success'):''}" id="drag-handle" title="${t('move')}">${icon(state.busy?'refresh':finished&&summary.success?'check':'tray')}</span>

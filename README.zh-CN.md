@@ -4,14 +4,14 @@
 
 [English](README.md) · [安装](docs/INSTALL.md) · [验证记录](docs/VALIDATION.md) · [设计](docs/DESIGN.md)
 
-<img src="docs/assets/neatpaste-v042-native.jpg" width="208" alt="NeatPaste v0.4.3 native desktop capsule" />
+<img src="docs/assets/neatpaste-v042-native.jpg" width="208" alt="NeatPaste native desktop capsule" />
 
 <details><summary>磨砂玻璃界面 / Frosted glass interface</summary>
 <img src="docs/assets/neatpaste-v042-light.jpg" width="332" alt="Native translucent light appearance" />
 <img src="docs/assets/neatpaste-v042-ready.jpg" width="332" alt="Native image format selection" />
 </details>
 
-v0.4.3 平时是一枚停在屏幕顶部的深色胶囊，实际图形约 **196 × 36 点**。直接从桌面或 Finder 拖入文件，展开后选择输出格式。结果存入原文件旁的「轻贴导出」，原件不动，重名自动编号。
+v0.5.0 平时是一枚停在屏幕顶部的深色胶囊，实际图形约 **196 × 36 点**。直接从桌面或 Finder 拖入文件，展开后选择输出格式。结果存入原文件旁的「轻贴导出」，原件不动，重名自动编号。
 
 这版参考苹果的 [AirDrop 与界面材质规范](docs/REFERENCES.md)，采用系统字体、蓝色操作按钮和格式下拉菜单。展开窗口随内容调整：空态 332 × 228 点，单文件 332 × 272 点。
 
@@ -21,13 +21,20 @@ v0.4.3 平时是一枚停在屏幕顶部的深色胶囊，实际图形约 **196 
 | --- | --- | --- |
 | PNG、JPG/JPEG、WebP、HEIC/HEIF、TIFF/TIF、BMP、GIF | PNG、JPG、HEIC、TIFF、BMP、GIF、PDF | 每个文件独立输出，动图和多图只取第一帧 |
 | TXT、Markdown、DOCX | TXT、MD、PDF、DOCX、RTF、HTML | 正文文字重新排版 |
-| PDF | TXT、MD、DOCX、RTF、HTML | 提取已有文字，不还原原版式，不含 OCR |
+| PDF | DOCX | 可编辑文字与内嵌图片；复杂页面可能保留为整页图片 |
+| PDF | TXT、MD、RTF、HTML | 提取已有文字，不还原原版式，不含 OCR |
 | PDF | PNG、JPG | **仅第一页，144 dpi**，后续页不导出 |
 | CSV、TSV、JSON | CSV、TSV、JSON | 行列整齐的文本表格，保留首行与空单元格 |
 
 JSON 表格采用二维**字符串**数组，例如 `[["姓名","编号"],["小明","00123"]]`；对象、数值或不齐整的行会被拒绝，避免擅自推断类型。CSV/TSV 保留原始文字，包括形似公式的单元格；此类值会提示可能被表格软件当作公式解释。
 
-DOCX 仅提取正文，不保留页眉、脚注、图片、表格版式。Markdown 按原文保留标记。RTF 和 HTML 是文字导出格式，不是输入格式。WebP 当前只支持输入。GIF 输出为静态、最多 256 色；JPG、HEIC、BMP、GIF 的透明部分铺白。TXT/MD/CSV/TSV 使用 UTF-8 或带 BOM 的 UTF-16，暂不支持 GBK。
+导入 DOCX 时仅提取正文，不保留页眉、脚注、图片、表格版式。Markdown 按原文保留标记。RTF 和 HTML 是文字导出格式，不是输入格式。WebP 当前只支持输入。GIF 输出为静态、最多 256 色；JPG、HEIC、BMP、GIF 的透明部分铺白。TXT/MD/CSV/TSV 使用 UTF-8 或带 BOM 的 UTF-16，暂不支持 GBK。
+
+### PDF 转 Word 保留图片
+
+选择 **Word (.docx)** 后，图片会直接嵌入 Word 文件，离线打开也不依赖原 PDF 或外部图片链接。普通文字可以编辑，识别到的图片区域按阅读顺序与文字重排，保持图片比例并按原 PDF 页分隔。
+
+复杂图形、暂不支持的绘图方式和扫描页可能以整页图片保留；其中的文字，以及叠在图片上的文字，无法单独编辑，转换结果会说明。这不等于 OCR 或完全还原复杂多栏、表格版式。包含可见非链接批注的 PDF 会提示暂不支持，请先将批注合并到 PDF 页面。图片处理设有总量和体积上限，超限时请拆分 PDF。
 
 ## 使用
 
@@ -48,11 +55,11 @@ DOCX 仅提取正文，不保留页眉、脚注、图片、表格版式。Markdo
 - 文字最多 200,000 个 UTF-16 单元，PDF 最多 100 页，表格最多 50,000 单元格；DOCX 解压后最多 40 MiB / 2,000 条目。
 - 每个转换助手最多运行 120 秒。导出目录需有写入权限及剩余空间。
 
-当前实测与限制见[验证记录](docs/VALIDATION.md)。不把旧版内存数据用于 v0.4.3。
+当前实测与限制见[验证记录](docs/VALIDATION.md)。不把旧版内存数据用于 v0.5.0。
 
 ## 安装与源码
 
-本地包 `NeatPaste-v0.4.3-macOS-arm64.zip` 适用于 **M 系列芯片、macOS 13.3+**。解压，把 `NeatPaste.app` 放入「应用程序」。应用经过本地 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。Windows 后续再做；Intel 提供构建工作流，但未实机验证。
+本地包 `NeatPaste-v0.5.0-macOS-arm64.zip` 适用于 **M 系列芯片、macOS 13.3+**。解压，把 `NeatPaste.app` 放入「应用程序」。应用经过本地 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。Windows 后续再做；Intel 提供构建工作流，但未实机验证。
 
 开发需 Node.js 22.12+、Rust 1.90+、Xcode Command Line Tools。项目可直接上传 GitHub，保留 `.github` 等隐藏文件。
 

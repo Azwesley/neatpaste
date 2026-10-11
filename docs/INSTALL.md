@@ -1,8 +1,8 @@
-# Install NeatPaste v0.4.3
+# Install NeatPaste v0.5.0
 
 Requires Apple Silicon (M-series) and macOS 13.3 or later. Windows is planned for a later release. Intel builds are available through the build workflow but have not been validated on Intel hardware.
 
-1. Download `NeatPaste-v0.4.3-macOS-arm64.zip` from [GitHub Releases](https://github.com/gnpwvm28mg-eng/neatpaste/releases/latest).
+1. Download `NeatPaste-v0.5.0-macOS-arm64.zip` from [GitHub Releases](https://github.com/gnpwvm28mg-eng/neatpaste/releases/latest).
 2. Unzip it and move `NeatPaste.app` to Applications.
 3. Open the app. Drop a file onto the small capsule near the top of the screen, or click the capsule and choose **Choose Files…**.
 4. Pick a format, click **Convert**, then **Show in Finder**.
@@ -23,7 +23,7 @@ The package has a local ad-hoc signature. It does not have Developer ID signing 
 
 **Convert on drop** is off by default. When enabled, a new batch uses the last selected format for its file family, if every item supports it. The first batch still needs a format choice. Images, PDFs, documents and tables remember formats separately.
 
-See the [format matrix](../README.md#conversion-matrix) and [validation record](VALIDATION.md). PDF image output is limited to page 1; PDF-to-Word reflows embedded text without preserving layout. There is no OCR.
+See the [format matrix](../README.md#conversion-matrix) and [validation record](VALIDATION.md). PDF image output is limited to page 1; PDF-to-Word embeds rendered pictures alongside editable text; complex or scanned pages may be kept as full-page images. Text inside those images is not editable. There is no OCR or exact complex-layout reconstruction. Flatten visible non-link annotations into the PDF before converting.
 
 To uninstall, quit and remove the app. Exported files remain where they were saved.
 

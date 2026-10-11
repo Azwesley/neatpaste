@@ -24,6 +24,10 @@ function crc32(bytes) {
 }
 
 function deflateDOCX(stored) {
+  return zipEntries(storedEntries(stored));
+}
+
+function storedEntries(stored) {
   const entries = [];
   let cursor = 0;
   while (stored.readUInt32LE(cursor) === 0x04034b50) {
@@ -33,7 +37,38 @@ function deflateDOCX(stored) {
     entries.push({ name: stored.subarray(cursor + 30, cursor + 30 + nameLength), data: stored.subarray(payload, payload + size) });
     cursor = payload + size;
   }
-  return zipEntries(entries);
+  return entries;
+}
+
+function readDOCX(path) { return Object.fromEntries(storedEntries(readFileSync(path)).map(({ name, data }) => [name.toString(), data])); }
+
+function pdfStream(dictionary, content) {
+  const bytes = Buffer.isBuffer(content) ? content : Buffer.from(content);
+  return Buffer.concat([Buffer.from(`<< ${dictionary} /Length ${bytes.length} >>\nstream\n`), bytes, Buffer.from('\nendstream')]);
+}
+
+function writePDF(name, objects) {
+  const parts = [Buffer.from('%PDF-1.4\n')], offsets = [0];
+  let length = parts[0].length;
+  objects.forEach((object, index) => {
+    const data = Buffer.concat([Buffer.from(`${index + 1} 0 obj\n`), Buffer.isBuffer(object) ? object : Buffer.from(object), Buffer.from('\nendobj\n')]);
+    offsets.push(length); parts.push(data); length += data.length;
+  });
+  parts.push(Buffer.from(`xref\n0 ${offsets.length}\n0000000000 65535 f \n${offsets.slice(1).map(offset => `${String(offset).padStart(10, '0')} 00000 n \n`).join('')}trailer\n<< /Size ${offsets.length} /Root 1 0 R >>\nstartxref\n${length}\n%%EOF\n`));
+  const path = join(directory, name); writeFileSync(path, Buffer.concat(parts)); return path;
+}
+
+function formPDF(name, pageOptions = '', contentSuffix = '', formMatrix = '2 0 0 1 5 6') {
+  return writePDF(name, [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] ${pageOptions} /Resources << /Font << /F1 5 0 R >> /XObject << /Fm1 6 0 R >> >> /Contents 4 0 R >>`,
+    pdfStream('', `BT /F1 14 Tf 30 350 Td (FORM_SENTINEL) Tj ET q 1 0 0 1 20 30 cm /Fm1 Do Q ${contentSuffix}`),
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    pdfStream('/Type /XObject /Subtype /Form /BBox [0 0 200 200] /Matrix [1 0 0 1 10 10] /Resources << /XObject << /Fm2 7 0 R >> >>', '/Fm2 Do'),
+    pdfStream(`/Type /XObject /Subtype /Form /BBox [0 0 100 100] /Matrix [${formMatrix}] /Resources << /XObject << /Im1 8 0 R >> >>`, 'q 40 0 0 30 0 0 cm /Im1 Do Q'),
+    pdfStream('/Type /XObject /Subtype /Image /Width 2 /Height 2 /ColorSpace /DeviceRGB /BitsPerComponent 8', Buffer.from([255, 0, 0, 255, 0, 0, 0, 0, 255, 0, 0, 255])),
+  ]);
 }
 
 function zipEntries(entries) {
@@ -94,6 +129,7 @@ import Foundation
 import AppKit
 import ImageIO
 import CoreGraphics
+import CoreText
 import PDFKit
 let folder = URL(fileURLWithPath: CommandLine.arguments[2])
 if CommandLine.arguments[1] == "create" {
@@ -124,6 +160,37 @@ if CommandLine.arguments[1] == "create" {
     let twoPages = PDFDocument(data: pdf as Data)!
     while twoPages.pageCount > 2 { twoPages.removePage(at: twoPages.pageCount - 1) }
     precondition(twoPages.write(to: folder.appendingPathComponent("two-pages.pdf")))
+    let mixedData = NSMutableData()
+    let mixedConsumer = CGDataConsumer(data: mixedData as CFMutableData)!
+    var mixedRect = CGRect(x: 0, y: 0, width: 595, height: 842)
+    let mixed = CGContext(consumer: mixedConsumer, mediaBox: &mixedRect, nil)!
+    func label(_ text: String, _ x: CGFloat, _ y: CGFloat, _ target: CGContext) {
+        target.textPosition = CGPoint(x: x, y: y)
+        CTLineDraw(CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 16), .foregroundColor: NSColor.black])), target)
+    }
+    for number in 1...2 {
+        mixed.beginPDFPage(nil)
+        mixed.setFillColor(CGColor(gray: 1, alpha: 1)); mixed.fill(mixedRect)
+        label("第\(number)页 可编辑中文与图片", 44, 765, mixed)
+        label("PAGE_\(number)_TEXT_SENTINEL", 44, 730, mixed)
+        let bitmap = CGContext(data: nil, width: 240, height: 180, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        bitmap.clear(CGRect(x: 0, y: 0, width: 240, height: 180))
+        bitmap.setFillColor(number == 1 ? CGColor(red: 1, green: 0, blue: 0, alpha: 1) : CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+        bitmap.fill(CGRect(x: 4, y: 4, width: 232, height: 172))
+        mixed.draw(bitmap.makeImage()!, in: CGRect(x: 44, y: 500, width: 240, height: 180))
+        label("中文图片说明 caption \(number)", 44, 465, mixed)
+        mixed.saveGState(); mixed.translateBy(x: 380, y: 220); mixed.rotate(by: .pi / 6)
+        mixed.draw(bitmap.makeImage()!, in: CGRect(x: -80, y: -60, width: 160, height: 120)); mixed.restoreGState()
+        mixed.endPDFPage()
+    }
+    mixed.closePDF()
+    try! (mixedData as Data).write(to: folder.appendingPathComponent("mixed-images.pdf"))
+    let annotated = PDFDocument(data: mixedData as Data)!
+    let note = PDFAnnotation(bounds: CGRect(x: 10, y: 10, width: 100, height: 40), forType: .freeText, withProperties: nil)
+    note.contents = "A visible approval stamp"; annotated.page(at: 0)!.addAnnotation(note)
+    precondition(annotated.write(to: folder.appendingPathComponent("annotated.pdf")))
+    let profile = CGColorSpace(name: CGColorSpace.sRGB)!.copyICCData()! as Data
+    try! profile.write(to: folder.appendingPathComponent("rgb.icc"))
 } else if CommandLine.arguments[1] == "rtf" {
     let attributed = try! NSAttributedString(data: Data(contentsOf: folder), options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil)
     FileHandle.standardOutput.write(Data(attributed.string.utf8))
@@ -134,7 +201,10 @@ if CommandLine.arguments[1] == "create" {
     context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
     let pixels = context.data!.assumingMemoryBound(to: UInt8.self)
     let corner = (image.width * image.height - 1) * 4
-    let output: [String: Any] = ["type": CGImageSourceGetType(source)! as String, "width": image.width, "height": image.height, "corner": [Int(pixels[corner]), Int(pixels[corner + 1]), Int(pixels[corner + 2]), Int(pixels[corner + 3])]]
+    func pixel(_ x: Int, _ y: Int) -> [Int] { let i = (y * image.width + x) * 4; return (0..<4).map { Int(pixels[i + $0]) } }
+    var colored = 0
+    for i in 0..<(image.width * image.height) { if Int(pixels[i * 4]) - Int(pixels[i * 4 + 1]) > 80 || Int(pixels[i * 4 + 2]) - Int(pixels[i * 4 + 1]) > 80 { colored += 1 } }
+    let output: [String: Any] = ["type": CGImageSourceGetType(source)! as String, "width": image.width, "height": image.height, "colored": colored, "center": pixel(image.width / 2, image.height / 2), "upper": pixel(image.width / 2, image.height / 4), "lower": pixel(image.width / 2, image.height * 3 / 4), "left": pixel(image.width / 4, image.height / 2), "right": pixel(image.width * 3 / 4, image.height / 2), "corner": [Int(pixels[corner]), Int(pixels[corner + 1]), Int(pixels[corner + 2]), Int(pixels[corner + 3])]]
     FileHandle.standardOutput.write(try! JSONSerialization.data(withJSONObject: output))
 }
 `);
@@ -438,6 +508,116 @@ test('CSV, TSV and JSON round-trip Chinese, quotes, embedded newlines, empty cel
   assert.equal(backCSV.ok, true, backCSV.error);
   const backJSON = convert(backCSV.output, 'json');
   assert.deepEqual(JSON.parse(readFileSync(backJSON.output, 'utf8')), expected);
+});
+
+test('PDF to Word embeds every page image at its physical size and keeps complete editable text lines', { skip: !supported }, () => {
+  const result = convert(join(directory, 'mixed-images.pdf'), 'docx');
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.warning, 'pdfImagesReflow');
+  const entries = readDOCX(result.output), xml = entries['word/document.xml'].toString();
+  const media = Object.entries(entries).filter(([name]) => name.startsWith('word/media/'));
+  assert.equal(media.length, 4);
+  const relationships = entries['word/_rels/document.xml.rels'].toString();
+  assert.equal((relationships.match(/Target="media\/image\d+\.png"/g) ?? []).length, 4);
+  assert.equal(relationships.includes('TargetMode="External"'), false);
+  assert.match(entries['[Content_Types].xml'].toString(), /Extension="png" ContentType="image\/png"/);
+  for (const number of [1, 2]) {
+    assert.match(xml, new RegExp(`<w:t[^>]*>PAGE_${number}_TEXT_SENTINEL</w:t>`), 'Font runs on one baseline must remain one editable line');
+    assert.match(xml, new RegExp(`中文图片说明 caption ${number}`));
+  }
+  assert.equal((xml.match(/w:type="page"/g) ?? []).length, 1);
+  assert.ok(xml.indexOf('PAGE_1_TEXT_SENTINEL') < xml.indexOf('rIdImage1'));
+  assert.ok(xml.indexOf('rIdImage2') < xml.indexOf('PAGE_2_TEXT_SENTINEL'));
+  const extents = [...xml.matchAll(/<wp:extent cx="(\d+)" cy="(\d+)"/g)].map(match => [Number(match[1]) / 12700, Number(match[2]) / 12700]);
+  for (const [index, [, data]] of media.entries()) {
+    assert.equal(data.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+    const path = join(directory, `embedded-${index}.png`); writeFileSync(path, data);
+    const image = JSON.parse(execute(fixtureTool, ['inspect', path]).stdout);
+    assert.ok(image.colored > image.width * image.height * 0.4, `Image ${index} must contain the actual colored picture`);
+    const primary = index < 2 ? 0 : 2;
+    // CoreGraphics converts the source profile; compare the dominant channel.
+    assert.ok(image.center[primary] > 200 && image.center[primary] - image.center[1] > 120, `Wrong page/color for image ${index}: ${image.center}`);
+    if (index % 2 === 0) {
+      assert.ok(Math.abs(image.width - 480) <= 2 && Math.abs(image.height - 360) <= 2, `${image.width}x${image.height}`);
+      assert.ok(Math.abs(extents[index][0] - 240) <= 1 && Math.abs(extents[index][1] - 180) <= 1, JSON.stringify(extents[index]));
+      assert.ok(image.corner.slice(0, 3).every(value => value >= 245), 'Transparent edge must be white');
+    } else assert.ok(Math.abs(image.width / image.height - 198.5641 / 183.923) < 0.02, 'Rotated picture aspect ratio');
+  }
+});
+
+test('PDF Form transforms, page rotation and nonzero CropBox keep image pixels and aspect ratios', { skip: !supported }, () => {
+  for (const [name, options, dimensions] of [['form.pdf', '', [160, 60]], ['form-rotated.pdf', '/CropBox [10 20 290 390] /Rotate 90', [60, 160]]]) {
+    const result = convert(formPDF(name, options), 'docx');
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.warning, 'pdfImagesReflow');
+    const entries = readDOCX(result.output), xml = entries['word/document.xml'].toString();
+    assert.match(xml, /FORM_SENTINEL/);
+    const media = Object.entries(entries).filter(([key]) => key.startsWith('word/media/'));
+    assert.equal(media.length, 1);
+    const path = join(directory, `${name}.png`); writeFileSync(path, media[0][1]);
+    const image = JSON.parse(execute(fixtureTool, ['inspect', path]).stdout);
+    assert.deepEqual([image.width, image.height], dimensions);
+    assert.ok(image.colored > image.width * image.height * 0.95, 'Nested image crop cannot be blank');
+    const colors = options ? [image.left, image.right] : [image.upper, image.lower];
+    assert.ok(colors.some(color => color[0] > 240 && color[2] < 20) && colors.some(color => color[2] > 240 && color[0] < 20), JSON.stringify(colors));
+  }
+});
+
+test('PDF ICCBased numeric scn colors do not turn editable text into page screenshots', { skip: !supported }, () => {
+  const input = writePDF('icc-scn.pdf', [
+    '<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Resources << /Font << /F1 5 0 R >> /ColorSpace << /Cs1 [/ICCBased 6 0 R] >> /XObject << /Im1 7 0 R >> >> /Contents 4 0 R >>',
+    pdfStream('', '/Cs1 cs 1 1 1 scn 0 0 300 400 re f 0 0 0 scn BT /F1 14 Tf 30 350 Td (ICC_EDITABLE_SENTINEL) Tj ET q 80 0 0 40 40 100 cm /Im1 Do Q'),
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>', pdfStream('/N 3', readFileSync(join(directory, 'rgb.icc'))),
+    pdfStream('/Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB /BitsPerComponent 8', Buffer.from([255, 0, 0])),
+  ]);
+  const result = convert(input, 'docx');
+  assert.equal(result.ok, true, result.error); assert.equal(result.warning, 'pdfImagesReflow');
+  assert.match(readDOCX(result.output)['word/document.xml'].toString(), /ICC_EDITABLE_SENTINEL/);
+});
+
+test('text painted over a PDF image stays in that image without duplicate editable paragraphs', { skip: !supported }, () => {
+  const result = convert(formPDF('overlay.pdf', '', 'BT /F1 12 Tf 40 55 Td (OVERLAY_IN_IMAGE) Tj ET BT /F1 12 Tf 30 300 Td (OUTSIDE_EDITABLE) Tj ET'), 'docx');
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.warning, 'pdfImagesReflow,pdfTextInImages');
+  const entries = readDOCX(result.output), xml = entries['word/document.xml'].toString();
+  assert.equal(xml.includes('OVERLAY_IN_IMAGE'), false);
+  assert.match(xml, /OUTSIDE_EDITABLE/);
+  assert.match(xml, /FORM_SENTINEL/);
+  const image = entries['word/media/image1.png'];
+  assert.ok(image.readUInt32BE(16) > 160, 'Image expands to include the complete overlaid text');
+});
+
+test('image-only PDFs embed real pictures and complex vector/inline pages use explicit visual fallback', { skip: !supported }, () => {
+  const scanned = convert(join(directory, 'alpha.png'), 'pdf');
+  const scanWord = convert(scanned.output, 'docx');
+  assert.equal(scanWord.ok, true, scanWord.error);
+  assert.match(scanWord.warning, /pdfImagesReflow/);
+  assert.equal(Object.keys(readDOCX(scanWord.output)).filter(key => key.startsWith('word/media/')).length, 1);
+  for (const [name, drawing] of [['vector', '1 0 0 rg 40 100 80 40 re f'], ['inline', 'q 80 0 0 40 40 100 cm BI /W 1 /H 1 /CS /RGB /BPC 8 /F /AHx ID ff0000> EI Q']]) {
+    const input = writePDF(`${name}.pdf`, [
+      '<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+      '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+      pdfStream('', `BT /F1 14 Tf 30 350 Td (VISIBLE_IN_IMAGE) Tj ET ${drawing}`),
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    ]);
+    const result = convert(input, 'docx');
+    assert.equal(result.ok, true, result.error); assert.match(result.warning, /pdfVisualFallback/);
+    const entries = readDOCX(result.output);
+    assert.equal(entries['word/document.xml'].toString().includes('VISIBLE_IN_IMAGE'), false, 'Visual fallback must not duplicate page text');
+    const path = join(directory, `${name}-page.png`); writeFileSync(path, entries['word/media/image1.png']);
+    const image = JSON.parse(execute(fixtureTool, ['inspect', path]).stdout);
+    assert.deepEqual([image.width, image.height], [600, 800]);
+    assert.ok(image.colored > 10_000, `${name} visual must be in embedded image`);
+  }
+});
+
+test('PDF Word conversion stops on unsupported annotations, malformed transforms and scanner budgets', { skip: !supported }, () => {
+  assert.equal(convert(join(directory, 'annotated.pdf'), 'docx').error, 'pdfUnsupportedAnnotation');
+  assert.equal(convert(join(directory, 'locked.pdf'), 'docx').error, 'passwordProtected');
+  assert.equal(convert(join(directory, 'many-pages.pdf'), 'docx').error, 'tooManyPages');
+  assert.equal(convert(formPDF('bad-form.pdf', '', '', '1 0 0 1 2'), 'docx').error, 'invalidInput');
+  assert.equal(convert(formPDF('too-complex.pdf', '', 'q Q '.repeat(100_001)), 'docx').error, 'pdfImageLimit');
 });
 
 test('data conversion preserves formula-looking strings and warns only for spreadsheet text exports', { skip: !supported }, () => {
