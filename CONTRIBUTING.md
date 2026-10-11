@@ -1,6 +1,6 @@
 # Contributing
 
-NeatPaste v0.5.0 is a small, local Mac conversion island. Improvements should preserve a short interaction: drop files, choose a supported output, convert, and find the result.
+NeatPaste v0.6.0 is a small, local Mac conversion island. Improvements should preserve a short interaction: drop files, choose a supported output, convert, and find the result.
 
 ## Develop
 
@@ -29,6 +29,8 @@ Explain the concrete input or interaction, expected output, and validation. Use 
 - Keep native file paths behind registered queue identities; do not add broad filesystem commands to the renderer.
 - Justify new runtime dependencies, decoders, persistent storage, or background work.
 - Keep transformations and queue decisions testable separately from the window UI.
+- For animated GIF changes, decode the actual output frames and check motion, dimensions, aspect ratio, timing, loop metadata and limits. Preserve the first-frame behavior of still-image/GIF inputs. MOV/MP4 conversion must reject oversized or overlong files rather than silently shortening them.
+- Keep exported Live Photo pairing limited to explicitly supplied same-batch, same-directory, same-stem photo and MOV files. Test unrelated stems/directories, a photo without its MOV, and independently added files. Filename pairing must not be described as Apple asset-identity validation.
 
 Use narrowly scoped fixes. Formatting-only changes do not need new tests; meaningful conversion fixes should include regression fixtures where practical.
 
@@ -36,8 +38,10 @@ Use narrowly scoped fixes. Formatting-only changes do not need new tests; meanin
 
 Measure a release build and record the OS, hardware, version, input dimensions or page count, and method. Include associated WebView and conversion-helper processes. Compare idle and active conversion workloads without recycling an older version's numbers. The browser preview and installer size do not describe runtime memory.
 
+Label synthetic video fixtures separately from device validation. A generated MOV plus a same-stem still image checks the converter and pairing rules; it does not establish successful export or dragging of a real iPhone Live Photo through Photos.
+
 ## Scope
 
-Version 0.5.0 targets macOS; Windows is deferred. Cloud conversion, folder watching, clipboard history, OCR, exact PDF-to-Word layout reconstruction, and large office runtimes are outside the current design. See [the design notes](docs/DESIGN.md).
+Version 0.6.0 targets macOS; Windows is deferred. Cloud conversion, folder watching, clipboard history, OCR, exact PDF-to-Word layout reconstruction, Live Photo capture/editing, Photos effects and large office/video runtimes are outside the current design. See [the design notes](docs/DESIGN.md).
 
 Contributions are accepted under [MIT](LICENSE).

@@ -1,33 +1,38 @@
-# v0.5.0 PDF-to-Word validation
+# v0.6.0 animated GIF validation
 
-Date: 2026-10-11. Local checks ran on macOS 26.6.2 (25G83), Apple Silicon. The compact UI from [v0.4.2](VALIDATION-v0.4.2.md) and strict text decoding from [v0.4.3](VALIDATION-v0.4.3.md) are retained.
+Date: 2026-10-11. Local checks ran on macOS 26.6.2 (25G83), Apple Silicon. Previous PDF-to-Word evidence is archived in [v0.5.0 validation](VALIDATION-v0.5.0.md); its conversion tests remain passing.
 
-## Result
+## Result and automated checks
 
-PDF-to-DOCX now writes PNG data into `word/media/` with internal DrawingML relationships. Ordinary PDF text becomes editable Word paragraphs. Pictures are rendered at 144 dpi, retain their displayed aspect ratio, and are placed among text in approximate reading order, with source-page breaks. No external image relationships or source paths are written into the output.
+MOV and MP4 use AVFoundation decoding and ImageIO GIF encoding. Output includes multiple frames, source orientation and centisecond-rounded timing. GIF settings allow 320/480/640 px maximum edge, 10/15/20 fps and infinite looping or one play; defaults are 480/15/loop. Smaller sources are not enlarged. Live Photo grouping requires one explicitly selected HEIC/HEIF/JPG/JPEG and one same-stem MOV from the same canonical directory in the same intake batch. Pairing uses filenames, not Apple asset metadata, and never scans neighboring files or the Photos library.
 
-Complex vector/inline-image pages use an explicit full-page-image fallback. Text overlapping a picture stays in the picture to avoid duplication. Those cases report that text is not separately editable. Visible non-link annotations are rejected rather than omitted; users must flatten them first. This is not OCR or exact reconstruction of columns, tables, fonts or layout.
+- Frontend model: **9 tests passed**; JavaScript syntax and production Vite build passed. Tests cover motion format intersection, separate quick-conversion family and recovery from invalid saved GIF settings.
+- Rust host: **26 tests passed**, formatting and strict Clippy passed. New coverage includes explicit pairing, ambiguity and directory/intake boundaries, pair counting before the queue limit, companion deduplication, 100 MiB input limits, strict option validation and helper JSON. Completion layout survives collapse and settings visits; all-failed motion batches retain their retry controls.
+- Swift helper: **26 integration tests passed**. New groups exercise real H.264 and HEVC, MOV and MP4, changing frame pixels, orientation and its asymmetric marker, loop metadata, final-frame delays, audio removal, 15-second/300-frame boundaries and rejected damaged, audio-only, oversized and invalid-option inputs. The existing static-image and document suites, including PDF pictures embedded in editable DOCX, remain passing.
+- Release app build passed. GitHub CI runs the frontend on Linux and Rust/Swift checks on macOS 14; current runs are available in [Actions](https://github.com/gnpwvm28mg-eng/neatpaste/actions).
 
-## Automated checks
+## Animation and interface checks
 
-- Frontend model: 7 tests passed; JavaScript syntax check and Vite production build passed.
-- Rust host: 19 tests passed, `cargo fmt --check` passed, strict Clippy passed.
-- Swift converter: 23 integration tests passed. Six new groups cover embedded PNGs and internal relationships, editable text lines and source page breaks, physical image sizes, transparency, rotated images, true nested Form transforms, nonzero CropBox and 90-degree rotation, ICC color state, overlaid text, scanned PDFs, vector/inline fallback, annotation rejection, malformed transforms and scan limits. Pixel-color checks distinguish actual image content from blank crops.
-- Existing input, decoding, encryption, page-count, atomic output, image-format, document and table tests remain passing.
-- GitHub's macOS 14 and Linux jobs are available in [Actions](https://github.com/gnpwvm28mg-eng/neatpaste/actions).
+An independent Pillow pass decoded every output frame from three synthetic, moving 1.25-second fixtures. Contact sheets were inspected for the main and portrait outputs. All frame hashes were distinct.
 
-## Document and desktop checks
+| Output | Dimensions | Frames | Total delay | Loop extension | Bytes |
+| --- | --- | ---: | ---: | --- | ---: |
+| Default moving GIF | 480 × 270 | 19 | 1,250 ms | Infinite | 45,697 |
+| Portrait GIF | 90 × 160 | 25 | 1,250 ms | Infinite | 28,697 |
+| Single-play GIF | 320 × 180 | 13 | 1,250 ms | Absent | 19,124 |
 
-A two-page synthetic PDF contains selectable Chinese and English text, four colored image placements, transparent edges and 30-degree image rotation. The output has four real PNGs, complete editable sentinel lines, internal image relationships and one explicit source-page break. Its rendered two pages were inspected: Chinese/English text and all four images display, with no clipped pictures or overlapping paragraphs. Separate nested-Form outputs, including page rotation and a nonzero CropBox, were also rendered and inspected.
+The default 15 fps output distributes 60/70 ms delays and retains the final 50 ms. The single-play output uses 100 ms delays plus a final 50 ms. Portrait output honors the source's 90-degree preferred transform without upscaling; both moving content and the asymmetric orientation marker were checked. Actual playback can vary between GIF viewers.
 
-Rendering used the bundled headless LibreOffice and `render_docx.py`, with a temporary Fontconfig file pointing to the Mac's existing system fonts. The first renderer pass lacked CJK font discovery; configuring the QA renderer restored Chinese display without modifying the DOCX. LibreOffice and fonts are not bundled in NeatPaste. Pages also opened the DOCX and exposed editable Chinese/English body text and four independent image objects. Microsoft Word itself was not installed or tested.
+The browser preview was checked in Chinese/light and English/dark appearances. Size, frame rate and loop preferences survived reload. A mixed photo/video batch offered GIF and explained that only the video animates; removing the video restored ordinary image formats and height. The single-video options fit without scroll overflow at the 332 × 360-point animation preset. Idle capsule dimensions are unchanged.
 
-The signed desktop app selected the two-page PDF through the native file picker and converted it to Word in `轻贴导出`. That output byte-matched the visually checked helper output: 58,071 bytes, SHA256 `1bb829e32bee2055d5d73f5016c008551ad2b8a8531f980caa48fcdc60e60ae8`. The original PDF checksum was unchanged. Format selection and completion guidance were checked in the native window. Longer exceptional warnings remain scrollable in the compact panel.
+The signed v0.6.0 desktop app's interactive check was initially blocked by the Mac lock screen. Native picker and direct dragging for this release are not yet included in the verified coverage below.
 
-## Resource and distribution boundaries
+## Resources and distribution
 
-The unsigned converter is 317,808 bytes, SHA256 `1d5d0474eda136f93f4f28336bea8c37fdaa60ee7dd4060d004dac36229ea1d2`. The app still uses system WebKit and macOS PDF/image APIs; no browser or Office runtime is added.
+A single default conversion of the synthetic 640 × 360, 1.25-second MOV took **0.66 seconds elapsed** under `/usr/bin/time -l`. The helper reported **66,158,592 bytes maximum resident set size** (about 63.1 MiB) and **36,258,536 bytes peak memory footprint** (about 34.6 MiB). This measures one small conversion only, excluding the desktop app and WebKit processes; it is neither an idle-memory nor worst-case guarantee. The helper exits after each job. No FFmpeg, browser or Office runtime is added.
 
-PDF-to-Word processing retains the 20 MiB input, 100-page, 200,000 UTF-16-unit and 120-second job limits. New limits include 40 megapixels per rendered page, 200 megapixels of total page rendering, 40 MiB of uncompressed DOCX entry content, 500 output images, bounded Form depth and scan work. Oversized work fails explicitly. Conversion-time memory varies with page dimensions and image data; no new idle or worst-case memory benchmark is claimed.
+The signed app's files total **3,959,985 bytes** (about 3.78 MiB); its download ZIP is **1,771,173 bytes** (about 1.69 MiB). Video frames are processed individually in autorelease pools. Input is limited to 100 MiB, duration to 0.04–15 seconds and source frames to 40 megapixels. Output is capped at 300 frames, 125 million combined frame pixels and 50 MiB encoded bytes. These are input/work/output limits, not RAM limits. Metadata loading times out after 15 seconds, and the host stops a helper job after 120 seconds. External local and remote movie references are forbidden. DRM rejection is implemented but was not checked with an actual encrypted sample.
 
-Release ZIPs receive strict ad-hoc signature and byte-for-byte packaging checks. Published ZIPs have independent SHA256 checksums. Source packages exclude dependencies, build output, local QA artifacts and private documents. Packages are not Developer ID signed or Apple notarized. Physical cross-app dragging, global shortcut invocation, Intel hardware, the oldest supported macOS version and Windows remain outside this release's verified coverage. The user's particular PDF was not available; document checks used synthetic fixtures.
+The helper and app passed strict ad-hoc signature verification. The app ZIP passed CRC checks, and every packaged file byte-matched the signed app. Source archives exclude dependencies, build products and local QA/user files. Release assets include independent SHA256 checksums. Packages are not Developer ID signed or Apple notarized.
+
+A real iPhone Live Photo export, Photos-to-app dragging, global shortcut invocation, Intel hardware, the oldest supported macOS and Windows have not been device-validated. Synthetic MOV/MP4 and explicit-pair tests establish the conversion and filename-pairing behavior; they do not establish direct Photos interoperability or recreation of Photos' Live Photo effects.

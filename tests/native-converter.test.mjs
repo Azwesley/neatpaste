@@ -105,8 +105,8 @@ function execute(command, args, options = {}) {
   return result;
 }
 
-function convert(input, format, output = join(directory, `output-${++sequence}.${format}`)) {
-  const process = execute(helper, [], { input: JSON.stringify({ input, output, format }) });
+function convert(input, format, output = join(directory, `output-${++sequence}.${format}`), gifOptions) {
+  const process = execute(helper, [], { input: JSON.stringify({ input, output, format, ...(gifOptions ? { gifOptions } : {}) }) });
   let response;
   assert.doesNotThrow(() => { response = JSON.parse(process.stdout); }, `Expected JSON, got: ${process.stdout}\n${process.stderr}`);
   assert.equal(process.status, response.ok ? 0 : 1, process.stderr);
@@ -131,6 +131,7 @@ import ImageIO
 import CoreGraphics
 import CoreText
 import PDFKit
+import AVFoundation
 let folder = URL(fileURLWithPath: CommandLine.arguments[2])
 if CommandLine.arguments[1] == "create" {
     let context = CGContext(data: nil, width: 8, height: 4, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
@@ -191,6 +192,92 @@ if CommandLine.arguments[1] == "create" {
     precondition(annotated.write(to: folder.appendingPathComponent("annotated.pdf")))
     let profile = CGColorSpace(name: CGColorSpace.sRGB)!.copyICCData()! as Data
     try! profile.write(to: folder.appendingPathComponent("rgb.icc"))
+} else if CommandLine.arguments[1] == "motion" {
+    func video(_ name: String, codec: AVVideoCodecType = .h264, width: Int = 640, height: Int = 360, duration: Double = 1.25, rotated: Bool = false) -> Bool {
+        let url = folder.appendingPathComponent(name)
+        do {
+            let writer = try AVAssetWriter(outputURL: url, fileType: name.hasSuffix(".mp4") ? .mp4 : .mov)
+            let settings: [String: Any] = [AVVideoCodecKey: codec, AVVideoWidthKey: width, AVVideoHeightKey: height]
+            guard writer.canApply(outputSettings: settings, forMediaType: .video) else { return false }
+            let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+            if rotated { input.transform = CGAffineTransform(a: 0, b: 1, c: -1, d: 0, tx: CGFloat(height), ty: 0) }
+            let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height, kCVPixelBufferCGImageCompatibilityKey as String: true, kCVPixelBufferCGBitmapContextCompatibilityKey as String: true])
+            writer.add(input)
+            guard writer.startWriting() else { return false }
+            writer.startSession(atSourceTime: .zero)
+            let count = max(1, Int(ceil(duration * 20)))
+            for index in 0..<count {
+                let deadline = Date().addingTimeInterval(10)
+                while !input.isReadyForMoreMediaData && writer.status == .writing && Date() < deadline { Thread.sleep(forTimeInterval: 0.002) }
+                guard input.isReadyForMoreMediaData, let pool = adaptor.pixelBufferPool else { writer.cancelWriting(); return false }
+                var buffer: CVPixelBuffer?
+                guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer) == kCVReturnSuccess, let buffer else { return false }
+                CVPixelBufferLockBaseAddress(buffer, [])
+                let context = CGContext(data: CVPixelBufferGetBaseAddress(buffer), width: width, height: height, bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)!
+                let phase = CGFloat(index) / CGFloat(max(1, count - 1))
+                context.setFillColor(CGColor(red: 1 - phase, green: 0.1, blue: phase, alpha: 1)); context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+                context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fill(CGRect(x: 0, y: height * 3 / 4, width: width, height: height / 4))
+                let moving = CGRect(x: phase * CGFloat(width) * 0.8, y: CGFloat(height) * 0.25, width: CGFloat(width) / 5, height: CGFloat(height) / 3)
+                context.setFillColor(CGColor(red: 0.1, green: 0.9, blue: 0.25, alpha: 1)); context.fillEllipse(in: moving)
+                CVPixelBufferUnlockBaseAddress(buffer, [])
+                guard adaptor.append(buffer, withPresentationTime: CMTime(value: Int64(index), timescale: 20)) else { writer.cancelWriting(); return false }
+            }
+            writer.endSession(atSourceTime: CMTime(seconds: duration, preferredTimescale: 60000)); input.markAsFinished()
+            let done = DispatchSemaphore(value: 0); writer.finishWriting { done.signal() }
+            guard done.wait(timeout: .now() + 20) == .success, writer.status == .completed else { return false }
+            return true
+        } catch { return false }
+    }
+    precondition(video("motion.mov"))
+    precondition(video("motion.mp4", width: 160, height: 90))
+    precondition(video("portrait.mov", width: 160, height: 90, rotated: true))
+    precondition(video("too-long.mov", width: 32, height: 16, duration: 15.05))
+    precondition(video("duration-limit.mov", width: 32, height: 16, duration: 15))
+    precondition(video("too-short.mov", width: 32, height: 16, duration: 0.02))
+    let hevc = video("hevc.mov", codec: .hevc, width: 160, height: 90)
+    try! JSONSerialization.data(withJSONObject: ["hevc": hevc]).write(to: folder.appendingPathComponent("video-codecs.json"))
+    let audioURL = folder.appendingPathComponent("silence.caf")
+    do {
+    let audio = try! AVAudioFile(forWriting: audioURL, settings: [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 44100, AVNumberOfChannelsKey: 1])
+    let buffer = AVAudioPCMBuffer(pcmFormat: audio.processingFormat, frameCapacity: 4410)!
+    buffer.frameLength = 4410
+    memset(buffer.floatChannelData![0], 0, Int(buffer.frameLength) * MemoryLayout<Float>.size)
+    try! audio.write(from: buffer)
+    }
+    func composition(_ name: String, includeVideo: Bool) {
+        let composition = AVMutableComposition()
+        let source = AVURLAsset(url: audioURL)
+        let audioTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)!
+        try! audioTrack.insertTimeRange(CMTimeRange(start: .zero, duration: CMTime(seconds: 0.1, preferredTimescale: 44100)), of: source.tracks(withMediaType: .audio)[0], at: .zero)
+        if includeVideo {
+            let sourceVideo = AVURLAsset(url: folder.appendingPathComponent("motion.mov"))
+            try! composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)!.insertTimeRange(CMTimeRange(start: .zero, duration: CMTime(seconds: 1.25, preferredTimescale: 600)), of: sourceVideo.tracks(withMediaType: .video)[0], at: .zero)
+        }
+        let exporter = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough)!
+        exporter.outputURL = folder.appendingPathComponent(name); exporter.outputFileType = .mov
+        let done = DispatchSemaphore(value: 0); exporter.exportAsynchronously { done.signal() }
+        precondition(done.wait(timeout: .now() + 20) == .success && exporter.status == .completed, exporter.error?.localizedDescription ?? "export failed")
+    }
+    composition("audio-only.mov", includeVideo: false)
+    composition("motion-audio.mov", includeVideo: true)
+} else if CommandLine.arguments[1] == "inspect-gif" {
+    let source = CGImageSourceCreateWithURL(folder as CFURL, nil)!
+    let properties = CGImageSourceCopyProperties(source, nil)! as NSDictionary
+    let gif = properties[kCGImagePropertyGIFDictionary] as? NSDictionary
+    var frames: [[String: Any]] = []
+    for index in 0..<CGImageSourceGetCount(source) {
+        let image = CGImageSourceCreateImageAtIndex(source, index, nil)!
+        let properties = CGImageSourceCopyPropertiesAtIndex(source, index, nil)! as NSDictionary
+        let frameGIF = properties[kCGImagePropertyGIFDictionary] as? NSDictionary
+        let context = CGContext(data: nil, width: 16, height: 16, bitsPerComponent: 8, bytesPerRow: 64, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue)!
+        context.draw(image, in: CGRect(x: 0, y: 0, width: 16, height: 16))
+        let pixels = context.data!.assumingMemoryBound(to: UInt8.self)
+        func sample(_ x: Int, _ y: Int) -> [Int] { let offset = (y * 16 + x) * 4; return (0..<3).map { Int(pixels[offset + $0]) } }
+        var hash: UInt64 = 14695981039346656037
+        for offset in 0..<1024 where offset % 4 != 3 { hash = (hash ^ UInt64(pixels[offset])) &* 1099511628211 }
+        frames.append(["width": image.width, "height": image.height, "delay": frameGIF?[kCGImagePropertyGIFUnclampedDelayTime] ?? frameGIF?[kCGImagePropertyGIFDelayTime] ?? 0, "hash": String(hash), "top": sample(8, 1), "bottom": sample(8, 14), "left": sample(1, 8), "right": sample(14, 8)])
+    }
+    FileHandle.standardOutput.write(try! JSONSerialization.data(withJSONObject: ["frames": frames, "loop": gif?[kCGImagePropertyGIFLoopCount] ?? NSNull()]))
 } else if CommandLine.arguments[1] == "rtf" {
     let attributed = try! NSAttributedString(data: Data(contentsOf: folder), options: [.documentType: NSAttributedString.DocumentType.rtf], documentAttributes: nil)
     FileHandle.standardOutput.write(Data(attributed.string.utf8))
@@ -212,6 +299,8 @@ if CommandLine.arguments[1] == "create" {
   assert.equal(build.status, 0, build.stderr);
   const fixtures = execute(fixtureTool, ['create', directory]);
   assert.equal(fixtures.status, 0, fixtures.stderr);
+  const motion = execute(fixtureTool, ['motion', directory], { timeout: 90_000 });
+  assert.equal(motion.status, 0, motion.stderr);
   writeFileSync(join(directory, 'source.webp'), Buffer.from('UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==', 'base64'));
 });
 
@@ -436,6 +525,75 @@ test('every advertised image output is a real decodable format and WebP encoding
   const heif = join(directory, 'source.heif');
   writeFileSync(heif, readFileSync(join(directory, 'source.heic')));
   assert.equal(convert(heif, 'png').ok, true);
+});
+
+test('MOV H264 becomes a real animated GIF with changing pixels, exact duration and the chosen loop mode', { skip: !supported }, () => {
+  const input = join(directory, 'motion.mov');
+  for (const loop of [true, false]) {
+    const result = convert(input, 'gif', undefined, { maxDimension: 320, fps: 10, loop });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.warning, 'animatedGifLossy');
+    assert.ok(readFileSync(result.output).subarray(0, 6).toString().startsWith('GIF8'));
+    const inspected = JSON.parse(execute(fixtureTool, ['inspect-gif', result.output]).stdout);
+    assert.equal(inspected.frames.length, 13);
+    // ImageIO reports one playback when the file has no loop extension.
+    assert.equal(inspected.loop, loop ? 0 : 1);
+    assert.ok(new Set(inspected.frames.map(frame => frame.hash)).size > 8, 'Animation must contain changing decoded pixels');
+    assert.ok(inspected.frames.every(frame => frame.width === 320 && frame.height === 180));
+    assert.ok(Math.abs(inspected.frames.reduce((sum, frame) => sum + frame.delay, 0) - 1.25) < 0.001);
+    assert.equal(inspected.frames.at(-1).delay, 0.05, 'Final frame retains the exact remainder');
+    assert.equal(readFileSync(result.output).includes(Buffer.from('NETSCAPE2.0')), loop, 'Single playback must omit the looping extension');
+  }
+});
+
+test('video GIF defaults, MP4, HEVC and display orientation work without upscaling', { skip: !supported }, t => {
+  const defaultResult = convert(join(directory, 'motion.mov'), 'gif');
+  assert.equal(defaultResult.ok, true, defaultResult.error);
+  const defaults = JSON.parse(execute(fixtureTool, ['inspect-gif', defaultResult.output]).stdout);
+  assert.deepEqual([defaults.frames[0].width, defaults.frames[0].height, defaults.frames.length, defaults.loop], [480, 270, 19, 0]);
+  assert.ok(defaults.frames[0].top.every(value => value > 240), 'The source top orientation marker is visible');
+  for (const [name, dimensions] of [['motion.mp4', [160, 90]], ['portrait.mov', [90, 160]]]) {
+    const result = convert(join(directory, name), 'gif', undefined, { maxDimension: 640, fps: 20, loop: true });
+    assert.equal(result.ok, true, `${name}: ${result.error}`);
+    const gif = JSON.parse(execute(fixtureTool, ['inspect-gif', result.output]).stdout);
+    assert.deepEqual([gif.frames[0].width, gif.frames[0].height], dimensions);
+    assert.equal(gif.frames.length, 25);
+    assert.ok(new Set(gif.frames.map(frame => frame.hash)).size > 10);
+    if (name === 'portrait.mov') {
+      assert.ok(gif.frames[0].right.every(value => value > 240), 'preferredTransform moves the top white stripe to the right edge');
+      assert.ok(gif.frames[0].left[1] < 150, 'Rotation must preserve the opposite colored edge');
+    }
+  }
+  if (JSON.parse(readFileSync(join(directory, 'video-codecs.json'))).hevc) {
+    const result = convert(join(directory, 'hevc.mov'), 'gif');
+    assert.equal(result.ok, true, result.error);
+    const gif = JSON.parse(execute(fixtureTool, ['inspect-gif', result.output]).stdout);
+    assert.ok(gif.frames.length >= 2 && new Set(gif.frames.map(frame => frame.hash)).size > 2);
+  } else t.diagnostic('The system HEVC encoder is unavailable; the H264 and MP4 fixtures were verified.');
+  const audio = convert(join(directory, 'motion-audio.mov'), 'gif');
+  assert.equal(audio.ok, true, audio.error); assert.match(audio.warning, /videoAudioRemoved/);
+});
+
+test('video GIF conversion validates options, duration and input size without partial output', { skip: !supported }, () => {
+  const input = join(directory, 'motion.mov');
+  for (const gifOptions of [{ maxDimension: 200 }, { fps: 25 }, { maxDimension: 480, fps: 0 }, { maxDimension: -1 }, { fps: '15' }, { loop: 'false' }]) {
+    assert.equal(convert(input, 'gif', undefined, gifOptions).error, 'invalidGifOptions');
+  }
+  assert.equal(convert(input, 'png').error, 'unsupportedConversion');
+  assert.equal(convert(join(directory, 'too-long.mov'), 'gif').error, 'videoTooLong');
+  assert.equal(convert(join(directory, 'too-short.mov'), 'gif').error, 'videoTooShort');
+  assert.equal(convert(join(directory, 'audio-only.mov'), 'gif').error, 'videoNoTrack');
+  const corrupt = join(directory, 'corrupt.mov'); writeFileSync(corrupt, 'not a video');
+  assert.equal(convert(corrupt, 'gif').error, 'invalidVideo');
+  const large = join(directory, 'oversized.mp4'); writeFileSync(large, ''); truncateSync(large, 100 * 1024 * 1024 + 1);
+  assert.equal(convert(large, 'gif').error, 'inputTooLarge');
+  const edge = convert(join(directory, 'duration-limit.mov'), 'gif', undefined, { fps: 20, maxDimension: 640, loop: false });
+  assert.equal(edge.ok, true, edge.error);
+  const gif = JSON.parse(execute(fixtureTool, ['inspect-gif', edge.output]).stdout);
+  assert.equal(gif.frames.length, 300);
+  assert.ok(Math.abs(gif.frames.reduce((sum, frame) => sum + frame.delay, 0) - 15) < 0.001);
+  const still = convert(join(directory, 'alpha.png'), 'gif');
+  assert.equal(JSON.parse(execute(fixtureTool, ['inspect-gif', still.output]).stdout).frames.length, 1, 'Existing photo conversion stays a static GIF');
 });
 
 test('RTF, HTML and Markdown exports preserve text and escape active markup', { skip: !supported }, () => {

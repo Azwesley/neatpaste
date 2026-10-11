@@ -13,7 +13,7 @@ const architecture = target.startsWith('aarch64') || target.startsWith('arm64') 
 if (!architecture) throw new Error(`Unsupported native conversion target: ${target}`);
 mkdirSync(resolve(root, 'native/bin'), { recursive: true });
 const result = spawnSync('xcrun', ['swiftc', '-O', '-target', `${architecture}-apple-macosx13.3`,
-  '-framework', 'AppKit', '-framework', 'ImageIO', '-framework', 'PDFKit', '-framework', 'CoreGraphics', '-framework', 'CoreText', '-framework', 'UniformTypeIdentifiers', '-lz',
+  '-framework', 'AppKit', '-framework', 'ImageIO', '-framework', 'PDFKit', '-framework', 'CoreGraphics', '-framework', 'CoreText', '-framework', 'UniformTypeIdentifiers', '-framework', 'AVFoundation', '-lz',
   resolve(root, 'native/Converter.swift'), '-o', resolve(root, 'native/bin/neatpaste-convert')], { stdio: 'inherit' });
 if (result.error) throw result.error;
 process.exit(result.status ?? 1);

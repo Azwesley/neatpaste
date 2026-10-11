@@ -32,8 +32,19 @@ export function fileSize(bytes) {
 
 const IMAGE_TYPES = new Set(['png','jpg','jpeg','webp','heic','heif','tif','tiff','bmp','gif']);
 const DATA_TYPES = new Set(['csv','tsv','json']);
+const MOTION_TYPES = new Set(['mov','mp4','livephoto']);
+export function hasMotion(files) {
+  return files.some(file => !file.error && MOTION_TYPES.has(file.ext?.toLowerCase()));
+}
+export function gifOptions(preferences) {
+  return {
+    maxDimension: [320,480,640].includes(preferences?.maxDimension) ? preferences.maxDimension : 480,
+    fps: [10,15,20].includes(preferences?.fps) ? preferences.fps : 15,
+    loop: typeof preferences?.loop === 'boolean' ? preferences.loop : true,
+  };
+}
 export function conversionFamily(files) {
-  const types=new Set(files.filter(f=>!f.error).map(f=>IMAGE_TYPES.has(f.ext?.toLowerCase())?'image':f.ext==='pdf'?'pdf':DATA_TYPES.has(f.ext)?'data':'document'));
+  const types=new Set(files.filter(f=>!f.error).map(f=>MOTION_TYPES.has(f.ext?.toLowerCase())?'motion':IMAGE_TYPES.has(f.ext?.toLowerCase())?'image':f.ext==='pdf'?'pdf':DATA_TYPES.has(f.ext)?'data':'document'));
   return types.size===1?[...types][0]:'mixed';
 }
 export function quickFormat(files, previousIds, preferences) {

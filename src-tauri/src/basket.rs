@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::{BTreeMap, HashSet},
+    ffi::OsString,
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -16,6 +18,7 @@ const IMAGE_FORMATS: &[&str] = &["png", "jpg", "heic", "tiff", "bmp", "gif", "pd
 const DOCUMENT_FORMATS: &[&str] = &["txt", "md", "pdf", "docx", "rtf", "html"];
 const PDF_FORMATS: &[&str] = &["txt", "md", "docx", "rtf", "html", "png", "jpg"];
 const DATA_FORMATS: &[&str] = &["csv", "tsv", "json"];
+const VIDEO_FORMATS: &[&str] = &["gif"];
 const OUTPUT_FORMATS: &[&str] = &[
     "png", "jpg", "heic", "tiff", "bmp", "gif", "pdf", "txt", "md", "docx", "rtf", "html", "csv",
     "tsv", "json",
@@ -28,6 +31,8 @@ pub enum Layout {
     Empty,
     File,
     Batch,
+    Animation,
+    AnimationBatch,
     Settings,
 }
 
@@ -45,9 +50,57 @@ impl Layout {
             Self::Empty => 228.0,
             Self::File => 272.0,
             Self::Batch => 352.0,
+            Self::Animation => 360.0,
+            Self::AnimationBatch => 432.0,
             Self::Settings => 398.0,
         };
         (332.0, height)
+    }
+
+    fn for_items(items: &[Item]) -> Self {
+        if items.iter().any(|item| is_animation(&item.entry.ext)) {
+            if items.len() == 1 {
+                Self::Animation
+            } else {
+                Self::AnimationBatch
+            }
+        } else {
+            Self::for_file_count(items.len())
+        }
+    }
+}
+
+fn is_animation(ext: &str) -> bool {
+    matches!(ext, "mov" | "mp4" | "livephoto")
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GifOptions {
+    max_dimension: u16,
+    fps: u8,
+    #[serde(rename = "loop")]
+    loop_forever: bool,
+}
+
+impl Default for GifOptions {
+    fn default() -> Self {
+        Self {
+            max_dimension: 480,
+            fps: 15,
+            loop_forever: true,
+        }
+    }
+}
+
+impl GifOptions {
+    fn validate(self) -> Result<Self, String> {
+        if ![320, 480, 640].contains(&self.max_dimension) || ![10, 15, 20].contains(&self.fps) {
+            return Err(
+                "GIF 设置无效：尺寸请选择 320、480 或 640，帧率请选择 10、15 或 20。".into(),
+            );
+        }
+        Ok(self)
     }
 }
 
@@ -134,6 +187,7 @@ pub struct Entry {
 struct Item {
     entry: Entry,
     input: Option<PathBuf>,
+    paired_photo: Option<PathBuf>,
     output: Option<PathBuf>,
 }
 
@@ -141,12 +195,35 @@ pub struct Basket {
     items: Vec<Item>,
     expanded: bool,
     layout: Layout,
+    content_layout: Layout,
     pinned: bool,
     busy: bool,
     completed: bool,
     next_id: u64,
     placement: Placement,
     pub quit_after_conversion: bool,
+}
+
+impl Basket {
+    fn record_layout(&mut self, layout: Layout) {
+        self.layout = layout;
+        if layout != Layout::Settings {
+            self.content_layout = layout;
+        }
+    }
+
+    fn expansion_layout(&self, expanded: bool) -> Layout {
+        if expanded && self.layout == Layout::Settings {
+            Layout::Settings
+        } else if self.completed {
+            // Completion can show either a compact result or animation retry
+            // controls. Preserve the frontend's last content layout across a
+            // collapse or preferences visit, even when it needs no new render.
+            self.content_layout
+        } else {
+            Layout::for_items(&self.items)
+        }
+    }
 }
 
 pub type SharedBasket = Arc<Mutex<Basket>>;
@@ -156,6 +233,7 @@ pub fn new_state() -> SharedBasket {
         items: Vec::new(),
         expanded: false,
         layout: Layout::Empty,
+        content_layout: Layout::Empty,
         pinned: true,
         busy: false,
         completed: false,
@@ -225,6 +303,7 @@ fn formats_for(ext: &str) -> (&'static [&'static str], u64) {
         "txt" | "md" | "docx" => (DOCUMENT_FORMATS, 20 * 1024 * 1024),
         "pdf" => (PDF_FORMATS, 20 * 1024 * 1024),
         "csv" | "tsv" | "json" => (DATA_FORMATS, 20 * 1024 * 1024),
+        "mov" | "mp4" => (VIDEO_FORMATS, 100 * 1024 * 1024),
         _ => (&[], 0),
     }
 }
@@ -251,6 +330,7 @@ fn inspect_file(path: &Path, id: String) -> Item {
             error: None,
         },
         input: None,
+        paired_photo: None,
         output: None,
     };
     let validation = (|| {
@@ -264,7 +344,7 @@ fn inspect_file(path: &Path, id: String) -> Item {
             return Err("暂不支持这种文件格式。");
         }
         if meta.len() > limit {
-            return Err("文件过大：图片最多 50 MB，文档最多 20 MB。");
+            return Err("文件过大：视频最多 100 MB，图片最多 50 MB，文档最多 20 MB。");
         }
         if meta.len() == 0 {
             return Err("这个文件是空的。");
@@ -276,6 +356,66 @@ fn inspect_file(path: &Path, id: String) -> Item {
         item.entry.error = Some(error.into());
     }
     item
+}
+
+/// Only the explicitly supplied batch is considered. No sibling lookup or
+/// cross-intake pairing can authorize an unselected photo or movie.
+fn inspect_selection(paths: Vec<PathBuf>) -> Vec<Item> {
+    let mut seen = HashSet::new();
+    let mut selected = Vec::new();
+    let mut groups: BTreeMap<(PathBuf, OsString), (Vec<usize>, Vec<usize>)> = BTreeMap::new();
+    for path in paths {
+        let canonical = path.canonicalize().ok();
+        if !seen.insert(canonical.clone().unwrap_or_else(|| path.clone())) {
+            continue;
+        }
+        let item = inspect_file(&path, String::new());
+        if let Some(canonical) = canonical.as_ref() {
+            if let (Some(parent), Some(stem)) = (canonical.parent(), canonical.file_stem()) {
+                let group = groups
+                    .entry((parent.to_path_buf(), stem.to_os_string()))
+                    .or_default();
+                match item.entry.ext.as_str() {
+                    "heic" | "heif" | "jpg" | "jpeg" => group.0.push(selected.len()),
+                    "mov" => group.1.push(selected.len()),
+                    _ => {}
+                }
+            }
+        }
+        selected.push(item);
+    }
+    let mut partners = vec![None; selected.len()];
+    for (photos, movies) in groups.values() {
+        if let ([photo], [movie]) = (photos.as_slice(), movies.as_slice()) {
+            if selected[*photo].entry.error.is_none() && selected[*movie].entry.error.is_none() {
+                partners[*photo] = Some((*photo, *movie));
+                partners[*movie] = Some((*photo, *movie));
+            }
+        }
+    }
+    let mut items = Vec::new();
+    for (index, item) in selected.iter().enumerate() {
+        if let Some((photo, movie)) = partners[index] {
+            if index != photo.min(movie) {
+                continue;
+            }
+            let mut paired = selected[movie].clone();
+            let photo_path = selected[photo]
+                .input
+                .as_ref()
+                .expect("validated selected photo");
+            paired.entry.ext = "livephoto".into();
+            paired.entry.name = format!(
+                "{} · Live Photo",
+                photo_path.file_stem().unwrap_or_default().to_string_lossy()
+            );
+            paired.paired_photo = Some(photo_path.clone());
+            items.push(paired);
+        } else {
+            items.push(item.clone());
+        }
+    }
+    items
 }
 
 fn emit_files(app: &AppHandle, state: &SharedBasket) {
@@ -302,10 +442,28 @@ fn append_paths(basket: &mut Basket, paths: Vec<PathBuf>) -> Result<bool, String
         basket.items.clear();
         basket.completed = false;
     }
+    let paths = paths
+        .into_iter()
+        .filter(|path| {
+            path.canonicalize().ok().is_none_or(|canonical| {
+                !basket.items.iter().any(|item| {
+                    item.input.as_ref() == Some(&canonical)
+                        || item.paired_photo.as_ref() == Some(&canonical)
+                })
+            })
+        })
+        .collect();
     let mut overflow = false;
-    for path in paths {
-        let canonical = path.canonicalize().ok();
-        if canonical.is_some() && basket.items.iter().any(|i| i.input == canonical) {
+    for mut item in inspect_selection(paths) {
+        if basket.items.iter().any(|existing| {
+            item.input
+                .iter()
+                .chain(item.paired_photo.iter())
+                .any(|path| {
+                    existing.input.as_ref() == Some(path)
+                        || existing.paired_photo.as_ref() == Some(path)
+                })
+        }) {
             continue;
         }
         if basket.items.len() >= MAX_FILES {
@@ -313,7 +471,7 @@ fn append_paths(basket: &mut Basket, paths: Vec<PathBuf>) -> Result<bool, String
             break;
         }
         basket.next_id += 1;
-        let item = inspect_file(&path, format!("file-{}", basket.next_id));
+        item.entry.id = format!("file-{}", basket.next_id);
         basket.items.push(item);
     }
     Ok(overflow)
@@ -350,10 +508,10 @@ pub async fn choose_files(app: AppHandle) -> Result<(), String> {
     let files = rfd::AsyncFileDialog::new()
         .set_title("选择需要转换的文件")
         .add_filter(
-            "图片、文档和数据文件",
+            "图片、视频、文档和数据文件",
             &[
                 "png", "jpg", "jpeg", "webp", "heic", "heif", "tiff", "tif", "bmp", "gif", "txt",
-                "md", "docx", "pdf", "csv", "tsv", "json",
+                "md", "docx", "pdf", "csv", "tsv", "json", "mov", "mp4",
             ],
         )
         .pick_files()
@@ -414,7 +572,7 @@ fn resize_window(app: &AppHandle, expanded: bool, layout: Layout) -> Result<(), 
     {
         let mut basket = lock(&state)?;
         basket.expanded = expanded;
-        basket.layout = layout;
+        basket.record_layout(layout);
         basket.placement.compact_anchor = Some(if expanded {
             anchor
         } else {
@@ -429,11 +587,7 @@ pub fn set_expanded_inner(app: &AppHandle, expanded: bool) -> Result<(), String>
     let layout = {
         let state = app.state::<SharedBasket>();
         let basket = lock(&state)?;
-        if expanded && basket.layout == Layout::Settings {
-            Layout::Settings
-        } else {
-            Layout::for_file_count(basket.items.len())
-        }
+        basket.expansion_layout(expanded)
     };
     resize_window(app, expanded, layout)?;
     let _ = app.emit("basket-expanded", expanded);
@@ -454,7 +608,7 @@ pub fn set_layout(app: AppHandle, layout: Layout) -> Result<bool, String> {
             return Ok(basket.expanded);
         }
         if !basket.expanded {
-            basket.layout = layout;
+            basket.record_layout(layout);
             return Ok(false);
         }
         basket.expanded
@@ -709,8 +863,42 @@ fn run_helper(
     input: &Path,
     output: &Path,
     format: &str,
+    gif_options: Option<GifOptions>,
 ) -> Result<Option<String>, String> {
-    run_helper_with_timeout(helper, input, output, format, Duration::from_secs(120))
+    run_helper_with_timeout(
+        helper,
+        input,
+        output,
+        format,
+        gif_options,
+        Duration::from_secs(120),
+    )
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HelperRequest<'a> {
+    input: &'a Path,
+    output: &'a Path,
+    format: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gif_options: Option<GifOptions>,
+}
+
+fn helper_request(
+    input: &Path,
+    output: &Path,
+    format: &str,
+    gif_options: Option<GifOptions>,
+) -> Result<Vec<u8>, String> {
+    let gif_options = gif_options.map(GifOptions::validate).transpose()?;
+    serde_json::to_vec(&HelperRequest {
+        input,
+        output,
+        format,
+        gif_options,
+    })
+    .map_err(|e| e.to_string())
 }
 
 fn run_helper_with_timeout(
@@ -718,17 +906,16 @@ fn run_helper_with_timeout(
     input: &Path,
     output: &Path,
     format: &str,
+    gif_options: Option<GifOptions>,
     timeout: Duration,
 ) -> Result<Option<String>, String> {
+    let request = helper_request(input, output, format, gif_options)?;
     let mut child = Command::new(helper)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .map_err(|_| "无法启动本地转换组件。")?;
-    let request =
-        serde_json::to_vec(&serde_json::json!({"input":input,"output":output,"format":format}))
-            .map_err(|e| e.to_string())?;
     let write_result = child
         .stdin
         .take()
@@ -773,7 +960,9 @@ fn convert_one(
     helper: &Path,
     item: &Item,
     format: &str,
+    gif_options: Option<GifOptions>,
 ) -> Result<(PathBuf, Option<String>), String> {
+    let gif_options = gif_options.map(GifOptions::validate).transpose()?;
     if let Some(error) = &item.entry.error {
         return Err(error.clone());
     }
@@ -785,6 +974,8 @@ fn convert_one(
     if let Some(error) = current.entry.error {
         return Err(error);
     }
+    let gif_options =
+        (format == "gif" && is_animation(&item.entry.ext)).then(|| gif_options.unwrap_or_default());
     let dir = output_directory(input)?;
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -794,7 +985,7 @@ fn convert_one(
     fs::create_dir(&temp_directory).map_err(|_| "导出文件夹不可写。")?;
     let temp = temp_directory.join(format!("converted.{format}"));
     let outcome = (|| {
-        let warning = run_helper(helper, input, &temp, format)?;
+        let warning = run_helper(helper, input, &temp, format, gif_options)?;
         let file = OpenOptions::new()
             .read(true)
             .open(&temp)
@@ -816,10 +1007,12 @@ pub async fn convert_files(
     app: AppHandle,
     state: tauri::State<'_, SharedBasket>,
     format: String,
+    gif_options: Option<GifOptions>,
 ) -> Result<Vec<ConversionResult>, String> {
     if !OUTPUT_FORMATS.contains(&format.as_str()) {
         return Err("暂不支持这个输出格式。".into());
     }
+    let gif_options = gif_options.map(GifOptions::validate).transpose()?;
     let helper = helper_path(&app)?;
     let state = state.inner().clone();
     let items = {
@@ -853,7 +1046,7 @@ pub async fn convert_files(
                 error: None,
                 warning: None,
             };
-            match convert_one(&helper, item, &format) {
+            match convert_one(&helper, item, &format, gif_options) {
                 Ok((output, warning)) => {
                     result.ok = true;
                     result.output_name =
@@ -933,6 +1126,8 @@ mod tests {
             ("empty", Layout::Empty, 228.0),
             ("file", Layout::File, 272.0),
             ("batch", Layout::Batch, 352.0),
+            ("animation", Layout::Animation, 360.0),
+            ("animationbatch", Layout::AnimationBatch, 432.0),
             ("settings", Layout::Settings, 398.0),
         ] {
             assert_eq!(
@@ -988,7 +1183,14 @@ mod tests {
             expanded_edge: None,
         };
         let mut current = anchor;
-        for layout in [Layout::Settings, Layout::Empty, Layout::Batch, Layout::File] {
+        for layout in [
+            Layout::Settings,
+            Layout::AnimationBatch,
+            Layout::Animation,
+            Layout::Empty,
+            Layout::Batch,
+            Layout::File,
+        ] {
             let remembered = placement.anchor_for(current, true);
             assert_eq!(remembered, anchor);
             let (position, size) = fit_window(remembered, true, layout, 1.0, area, bounds);
@@ -1066,11 +1268,14 @@ mod tests {
         assert_eq!(formats_for("csv").0, DATA_FORMATS);
         assert_eq!(formats_for("tsv").0, DATA_FORMATS);
         assert_eq!(formats_for("json").0, DATA_FORMATS);
+        assert_eq!(formats_for("mov"), (VIDEO_FORMATS, 100 * 1024 * 1024));
+        assert_eq!(formats_for("mp4"), (VIDEO_FORMATS, 100 * 1024 * 1024));
         assert!(formats_for("rtf").0.is_empty());
         assert!(formats_for("html").0.is_empty());
         assert!(!IMAGE_FORMATS.contains(&"webp"));
         for input in [
             "png", "jpg", "webp", "heif", "gif", "txt", "md", "docx", "pdf", "csv", "tsv", "json",
+            "mov", "mp4",
         ] {
             assert!(formats_for(input)
                 .0
@@ -1093,6 +1298,221 @@ mod tests {
         ));
         fs::create_dir(&p).unwrap();
         p
+    }
+
+    fn selected_file(dir: &Path, name: &str) -> PathBuf {
+        let path = dir.join(name);
+        fs::write(&path, format!("original {name}")).unwrap();
+        path
+    }
+
+    #[test]
+    fn completed_animation_reopens_last_content_layout_after_settings_or_collapse() {
+        let dir = test_directory("completed-layout");
+        let state = new_state();
+        let mut basket = lock(&state).unwrap();
+        append_paths(&mut basket, vec![selected_file(&dir, "clip.mov")]).unwrap();
+        assert_eq!(basket.expansion_layout(true), Layout::Animation);
+        basket.completed = true;
+        for layout in [
+            Layout::File,
+            Layout::Animation,
+            Layout::Batch,
+            Layout::AnimationBatch,
+        ] {
+            basket.record_layout(layout);
+            assert_eq!(basket.expansion_layout(false), layout);
+            assert_eq!(basket.expansion_layout(true), layout);
+            basket.record_layout(Layout::Settings);
+            assert_eq!(basket.expansion_layout(true), Layout::Settings);
+            let collapsed_layout = basket.expansion_layout(false);
+            assert_eq!(collapsed_layout, layout);
+            basket.record_layout(collapsed_layout);
+            assert_eq!(basket.expansion_layout(true), layout);
+        }
+        basket.record_layout(Layout::File);
+        append_paths(&mut basket, vec![selected_file(&dir, "new-clip.mp4")]).unwrap();
+        assert!(!basket.completed);
+        assert_eq!(basket.expansion_layout(true), Layout::Animation);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn live_photo_pairs_only_unique_explicit_photo_and_mov_in_one_batch() {
+        let dir = test_directory("live-pair");
+        for extension in ["HEIC", "heif", "JPG", "jpeg"] {
+            let photo = selected_file(&dir, &format!("capture.{extension}"));
+            let movie = selected_file(&dir, "capture.MOV");
+            for paths in [
+                vec![photo.clone(), movie.clone()],
+                vec![movie.clone(), photo.clone(), photo.clone()],
+            ] {
+                let items = inspect_selection(paths);
+                assert_eq!(items.len(), 1);
+                let item = &items[0];
+                assert_eq!(item.entry.ext, "livephoto");
+                assert_eq!(item.entry.name, "capture · Live Photo");
+                assert_eq!(item.entry.formats, vec!["gif"]);
+                assert_eq!(item.input, Some(movie.canonicalize().unwrap()));
+                assert_eq!(item.paired_photo, Some(photo.canonicalize().unwrap()));
+                assert_eq!(Layout::for_items(&items), Layout::Animation);
+                assert_eq!(
+                    fs::read_to_string(&photo).unwrap(),
+                    format!("original capture.{extension}")
+                );
+                assert_eq!(fs::read_to_string(&movie).unwrap(), "original capture.MOV");
+            }
+        }
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn live_photo_does_not_scan_or_pair_across_intakes_directories_or_ambiguity() {
+        let dir = test_directory("live-no-pair");
+        let other = test_directory("live-other");
+        let photo = selected_file(&dir, "capture.heic");
+        let alternate = selected_file(&dir, "capture.jpg");
+        let movie = selected_file(&dir, "capture.mov");
+        let foreign = selected_file(&other, "capture.mov");
+        assert_eq!(inspect_selection(vec![photo.clone()])[0].entry.ext, "heic");
+        assert_eq!(inspect_selection(vec![movie.clone()])[0].entry.ext, "mov");
+        for paths in [
+            vec![photo.clone(), foreign],
+            vec![photo.clone(), alternate, movie.clone()],
+        ] {
+            let expected = paths.len();
+            let items = inspect_selection(paths);
+            assert_eq!(items.len(), expected);
+            assert!(items.iter().all(|item| item.entry.ext != "livephoto"));
+        }
+        let mp4 = selected_file(&dir, "capture.mp4");
+        assert_eq!(inspect_selection(vec![photo.clone(), mp4]).len(), 2);
+        let state = new_state();
+        let mut basket = lock(&state).unwrap();
+        append_paths(&mut basket, vec![photo.clone()]).unwrap();
+        append_paths(&mut basket, vec![photo, movie]).unwrap();
+        assert_eq!(basket.items.len(), 2);
+        assert_eq!(basket.items[0].entry.ext, "heic");
+        assert_eq!(basket.items[1].entry.ext, "mov");
+        assert_eq!(Layout::for_items(&basket.items), Layout::AnimationBatch);
+        fs::remove_dir_all(dir).unwrap();
+        fs::remove_dir_all(other).unwrap();
+    }
+
+    #[test]
+    fn live_photo_pairing_precedes_item_limit_and_deduplicates_authorized_companions() {
+        let dir = test_directory("live-limit");
+        let mut paths = Vec::new();
+        for index in 0..MAX_FILES {
+            paths.push(selected_file(&dir, &format!("capture-{index}.heic")));
+            paths.push(selected_file(&dir, &format!("capture-{index}.mov")));
+        }
+        let state = new_state();
+        let mut basket = lock(&state).unwrap();
+        assert!(!append_paths(&mut basket, paths.clone()).unwrap());
+        assert_eq!(basket.items.len(), MAX_FILES);
+        assert!(basket
+            .items
+            .iter()
+            .all(|item| item.entry.ext == "livephoto"));
+        assert!(!append_paths(&mut basket, paths).unwrap());
+        assert!(append_paths(&mut basket, vec![selected_file(&dir, "extra.mp4")]).unwrap());
+        assert_eq!(basket.items.len(), MAX_FILES);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn video_limit_is_one_hundred_mib_and_invalid_pairs_remain_visible() {
+        let dir = test_directory("video-size");
+        let movie = selected_file(&dir, "capture.mov");
+        let file = OpenOptions::new().write(true).open(&movie).unwrap();
+        file.set_len(100 * 1024 * 1024).unwrap();
+        assert!(inspect_file(&movie, "1".into()).entry.error.is_none());
+        file.set_len(100 * 1024 * 1024 + 1).unwrap();
+        let photo = selected_file(&dir, "capture.heic");
+        let items = inspect_selection(vec![photo, movie]);
+        assert_eq!(items.len(), 2);
+        assert!(items[1].entry.error.as_ref().unwrap().contains("100 MB"));
+        assert_eq!(items[1].entry.formats, vec!["gif"]);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn gif_options_allow_only_bounded_presets_and_a_boolean_loop() {
+        assert_eq!(
+            serde_json::to_value(GifOptions::default()).unwrap(),
+            serde_json::json!({"maxDimension":480,"fps":15,"loop":true})
+        );
+        for dimension in [320, 480, 640] {
+            for fps in [10, 15, 20] {
+                for repeat in [true, false] {
+                    let options: GifOptions = serde_json::from_value(
+                        serde_json::json!({"maxDimension":dimension,"fps":fps,"loop":repeat}),
+                    )
+                    .unwrap();
+                    assert!(options.validate().is_ok());
+                }
+            }
+        }
+        for value in [
+            serde_json::json!({"maxDimension":480,"fps":30,"loop":true}),
+            serde_json::json!({"maxDimension":1920,"fps":15,"loop":true}),
+            serde_json::json!({"maxDimension":480,"fps":15,"loop":1}),
+            serde_json::json!({"maxDimension":480,"fps":15}),
+            serde_json::json!({"maxDimension":480,"fps":15,"loop":true,"output":"elsewhere"}),
+        ] {
+            assert!(serde_json::from_value::<GifOptions>(value)
+                .map_err(|e| e.to_string())
+                .and_then(GifOptions::validate)
+                .is_err());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn helper_receives_gif_options_and_legacy_requests_omit_them() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = test_directory("gif-request");
+        let helper = dir.join("helper");
+        let output = dir.join("helper.output");
+        fs::write(&helper, "#!/bin/sh\ncat > \"$0.request\"\nprintf GIF89a > \"$0.output\"\nprintf '%s' '{\"ok\":true}'\n").unwrap();
+        fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
+        for options in [
+            None,
+            Some(GifOptions::default()),
+            Some(GifOptions {
+                max_dimension: 320,
+                fps: 10,
+                loop_forever: false,
+            }),
+        ] {
+            run_helper(
+                &helper,
+                &dir.join("explicit movie.mov"),
+                &output,
+                "gif",
+                options,
+            )
+            .unwrap();
+            let request: serde_json::Value =
+                serde_json::from_slice(&fs::read(dir.join("helper.request")).unwrap()).unwrap();
+            assert_eq!(
+                request["input"],
+                dir.join("explicit movie.mov").to_string_lossy().as_ref()
+            );
+            assert_eq!(request["output"], output.to_string_lossy().as_ref());
+            assert_eq!(request["format"], "gif");
+            if let Some(options) = options {
+                assert_eq!(
+                    request["gifOptions"],
+                    serde_json::to_value(options).unwrap()
+                );
+            } else {
+                assert!(request.get("gifOptions").is_none());
+            }
+            assert!(request.get("gif_options").is_none());
+        }
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
@@ -1219,7 +1639,14 @@ mod tests {
         .unwrap();
         fs::set_permissions(&helper, fs::Permissions::from_mode(0o700)).unwrap();
         assert_eq!(
-            run_helper(&helper, &dir.join("input"), &dir.join("output"), "pdf").unwrap_err(),
+            run_helper(
+                &helper,
+                &dir.join("input"),
+                &dir.join("output"),
+                "pdf",
+                None
+            )
+            .unwrap_err(),
             "invalid_input"
         );
         fs::remove_dir_all(dir).unwrap();
@@ -1239,6 +1666,7 @@ mod tests {
             &dir.join("input"),
             &dir.join("output"),
             "txt",
+            None,
             Duration::from_millis(30),
         );
         assert!(result.unwrap_err().contains("超时"));
@@ -1256,8 +1684,8 @@ mod tests {
         let original = "轻贴保留原文件。\nNative helper integration.\n";
         fs::write(&input, original).unwrap();
         let item = inspect_file(&input, "file-test".into());
-        let first = convert_one(&helper, &item, "txt").unwrap().0;
-        let second = convert_one(&helper, &item, "txt").unwrap().0;
+        let first = convert_one(&helper, &item, "txt", None).unwrap().0;
+        let second = convert_one(&helper, &item, "txt", None).unwrap().0;
         assert_ne!(first, second);
         assert_eq!(fs::read_to_string(&input).unwrap(), original);
         assert_eq!(fs::read_to_string(&first).unwrap(), original);
@@ -1275,8 +1703,8 @@ mod tests {
         let original = "这是一份转换后保留原文件的测试。\nPDF publication regression.\n";
         fs::write(&input, original).unwrap();
         let item = inspect_file(&input, "file-test".into());
-        let first = convert_one(&helper, &item, "pdf").unwrap().0;
-        let second = convert_one(&helper, &item, "pdf").unwrap().0;
+        let first = convert_one(&helper, &item, "pdf", None).unwrap().0;
+        let second = convert_one(&helper, &item, "pdf", None).unwrap().0;
         assert_ne!(first, second);
         assert!(fs::read(&first).unwrap().starts_with(b"%PDF-"));
         assert!(fs::read(&second).unwrap().starts_with(b"%PDF-"));

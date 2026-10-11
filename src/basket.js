@@ -2,7 +2,7 @@ import './basket.css';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { availableFormats, selectFormat, summarizeResults, fileSize, conversionFamily, quickFormat } from './basket-model.js';
+import { availableFormats, selectFormat, summarizeResults, fileSize, conversionFamily, quickFormat, hasMotion, gifOptions } from './basket-model.js';
 
 const native = isTauri();
 const paths = {
@@ -98,6 +98,22 @@ Object.assign(copy.en, {
   dataNote:'Keeps rows and columns. JSON uses string rows.',
   collapse:'Collapse', open:'Open file converter', move:'Drag this icon to move the window',
 });
+Object.assign(copy.zh, {
+  gifSettings:'动态 GIF 设置', gifSize:'最长边', gifFPS:'帧率', gifLoop:'循环播放',
+  motionNote:'动态 GIF，无声音。最长 15 秒，100 MB。', mixedMotionNote:'视频转动图，照片转静态 GIF。无声音。',
+  liveStillNote:'静态 GIF；实况动图请同时添加配套 MOV。',
+  invalidGifOptions:'GIF 参数无效，请重新选择尺寸和帧率。', invalidVideo:'视频内容无法读取或已损坏。', videoProtected:'视频有播放保护，无法转换。', videoNoTrack:'文件中没有可读取的视频画面。', videoTooLong:'视频超过 15 秒，请先裁剪后再试。', videoTooShort:'视频太短，无法生成动态 GIF。', videoDecodeFailed:'无法解码视频画面，请尝试导出为 MOV 或 MP4。', gifResourceLimit:'GIF 超过处理或体积限制，请降低尺寸或帧率。', videoMetadataTimeout:'读取视频超时，请重新导出文件后再试。',
+  animatedGifLossy:'动态 GIF，最多 256 色。', videoAudioRemoved:'声音已去除。',
+});
+Object.assign(copy.en, {
+  gifSettings:'Animated GIF settings', gifSize:'Max edge', gifFPS:'Frame rate', gifLoop:'Loop playback',
+  motionNote:'Animated, silent GIF. Up to 15 s and 100 MB.', mixedMotionNote:'Videos animate; photos stay still. No audio.',
+  liveStillNote:'Still GIF. Add the matching MOV for motion.',
+  invalidGifOptions:'Invalid GIF settings. Choose a size and frame rate again.', invalidVideo:'The video is damaged or could not be read.', videoProtected:'Protected videos cannot be converted.', videoNoTrack:'No readable video track was found.', videoTooLong:'Video exceeds 15 seconds. Trim it first.', videoTooShort:'Video is too short to create an animated GIF.', videoDecodeFailed:'Could not decode this video. Try exporting it as MOV or MP4.', gifResourceLimit:'GIF exceeds processing or size limits. Lower the size or frame rate.', videoMetadataTimeout:'Video metadata timed out. Export the video again.',
+  animatedGifLossy:'Animated GIF, up to 256 colors.', videoAudioRemoved:'Audio removed.',
+});
+copy.zh.support+='\n动态 GIF：MOV / MP4，最长 15 秒、100 MB。\n实况照片：在「照片」导出未修改的原片，将同目录同名的照片与 MOV 同时拖入。仅有 HEIC/JPG 时为静态图。';
+copy.en.support+='\nAnimated GIF: MOV / MP4, up to 15 seconds and 100 MB.\nLive Photo: export unmodified originals from Photos, then add the matching photo and MOV from the same folder together. A lone HEIC/JPG is still.';
 paths.tray = '<path d="M12 3v10m-4-4 4 4 4-4M5 12l-2 5v3a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1v-3l-2-5M3 17h5l2 2h4l2-2h5"/>';
 paths.minus = '<path d="M6 12h12"/>';
 paths.lock = '<rect x="5" y="10" width="14" height="11" rx="3"/><path d="M8 10V7a4 4 0 0 1 8 0v3M12 14v3"/>';
@@ -109,6 +125,7 @@ const state = {
   lang:['zh','en'].includes(prefs.lang) ? prefs.lang : navigator.language.startsWith('zh') ? 'zh':'en',
   theme:['light','dark','system'].includes(prefs.theme) ? prefs.theme : 'system',
   quick: prefs.quick === true, remembered: prefs.remembered && typeof prefs.remembered==='object' ? prefs.remembered : {},
+  gifOptions:gifOptions(prefs.gifOptions),
   files:[], results:[], expanded:false, pinned:true, busy:false, format:null, drag:false, settings:false, progress:0, total:0, error:'', shortcut:null, picking:false,
 };
 let autoBatch='';
@@ -120,7 +137,7 @@ const images = new Set(['png','jpg','jpeg','webp','heic','heif','tif','tiff','bm
 const message = value => value ? value.split(/[;,]/).map(part => t(part.trim())).join(' ') : '';
 
 function savePrefs() {
-  try { localStorage.setItem('neatpaste.basket.preferences',JSON.stringify({lang:state.lang,theme:state.theme,quick:state.quick,remembered:state.remembered})); } catch { /* Content never depends on storage. */ }
+  try { localStorage.setItem('neatpaste.basket.preferences',JSON.stringify({lang:state.lang,theme:state.theme,quick:state.quick,remembered:state.remembered,gifOptions:state.gifOptions})); } catch { /* Content never depends on storage. */ }
 }
 function ingest(files) {
   const changed = JSON.stringify(files.map(file=>file.id)) !== JSON.stringify(state.files.map(file=>file.id));
@@ -136,7 +153,7 @@ async function refresh() {
   state.expanded=current.expanded; state.pinned=current.pinned; state.busy=current.busy;
   render();
 }
-const layouts = { empty:228, file:272, batch:352, settings:398 };
+const layouts = { empty:228, file:272, batch:352, animation:360, animationbatch:432, settings:398 };
 let desiredLayout = 'empty';
 let syncedLayout = '';
 let syncingLayout = false;
@@ -160,13 +177,22 @@ function fileRow(file) {
   const name = result?.ok ? result.outputName : file.name;
   const ext = result?.ok ? name.split('.').at(-1) : file.ext;
   return `<article class="file-row ${error?'file-error':''}">
-    <span class="document-icon ${images.has(file.ext.toLowerCase())?'photo':''}" aria-hidden="true">${icon(images.has(file.ext.toLowerCase())?'image':'file')}<b>${escape(ext.toUpperCase())}</b></span>
+    <span class="document-icon ${images.has(file.ext.toLowerCase())?'photo':''}" aria-hidden="true">${icon(images.has(file.ext.toLowerCase())?'image':'file')}<b>${escape(ext==='livephoto'?'LIVE':ext.toUpperCase())}</b></span>
     <div class="file-info"><strong title="${escape(name)}">${escape(name)}</strong>
-      <span>${error?escape(message(error)):result?.ok?`<span class="success-text">${icon('check')}${t('successOne')}</span>`:`${escape(file.ext.toUpperCase()||'FILE')} · ${fileSize(file.size)}`}</span>
+      <span>${error?escape(message(error)):result?.ok?`<span class="success-text">${icon('check')}${t('successOne')}</span>`:`${escape(file.ext==='livephoto'?'Live Photo':file.ext.toUpperCase()||'FILE')} · ${fileSize(file.size)}`}</span>
       ${result?.warning?`<small class="file-warning">${escape(message(result.warning))}</small>`:''}
     </div>
     ${result?.ok?`<button class="icon-button" data-reveal="${escape(file.id)}" aria-label="${t('reveal')}: ${escape(name)}" title="${t('reveal')}">${icon('folder')}</button>`:`<button class="icon-button remove" data-remove="${escape(file.id)}" aria-label="${t('remove')}: ${escape(name)}" ${state.busy?'disabled':''}>${icon('close')}</button>`}
   </article>`;
+}
+function motionControls() {
+  return `<div class="motion-options" role="group" aria-label="${t('gifSettings')}">
+    <div class="motion-selects">
+      <label for="gif-size">${t('gifSize')}<select id="gif-size" ${state.busy?'disabled':''}>${[320,480,640].map(size=>`<option value="${size}" ${state.gifOptions.maxDimension===size?'selected':''}>${size} px</option>`).join('')}</select></label>
+      <label for="gif-fps">${t('gifFPS')}<select id="gif-fps" ${state.busy?'disabled':''}>${[10,15,20].map(fps=>`<option value="${fps}" ${state.gifOptions.fps===fps?'selected':''}>${fps} fps</option>`).join('')}</select></label>
+    </div>
+    <label class="motion-loop">${t('gifLoop')}<input type="checkbox" role="switch" id="gif-loop" ${state.gifOptions.loop?'checked':''} ${state.busy?'disabled':''}></label>
+  </div>`;
 }
 function settingsContent() {
   return `<dialog id="preferences-dialog" class="settings-layer" aria-label="${t('settings')}">
@@ -183,7 +209,7 @@ function settingsContent() {
       <button class="park-button" id="park" ${!native?'disabled':''}>${t('park')}${icon('up')}</button>
       <p class="shortcut-status">${t(state.shortcut?.available?'shortcutOkay':native?'shortcutFailed':'previewLabel')}</p>
       <details><summary>${t('supportTitle')}</summary><p>${t('support')}</p><p>${t('privacy')}</p></details>
-      <footer><span>NeatPaste</span><span>0.5.0</span></footer>
+      <footer><span>NeatPaste</span><span>0.6.0</span></footer>
     </div>
   </dialog>`;
 }
@@ -198,14 +224,16 @@ function render() {
   const empty = !state.files.length;
   const allImages = usable.length > 0 && usable.every(file=>images.has(file.ext.toLowerCase()));
   const firstOutput = state.results.find(result=>result.ok);
-  desiredLayout = state.settings ? 'settings' : empty ? 'empty' : state.files.length===1 ? 'file' : 'batch';
+  const motion = hasMotion(usable) && state.format==='gif';
+  const showMotionOptions = motion && (!finished || summary.success===0);
+  desiredLayout = state.settings ? 'settings' : empty ? 'empty' : showMotionOptions ? state.files.length===1?'animation':'animationbatch' : state.files.length===1 ? 'file' : 'batch';
   document.documentElement.lang=state.lang==='zh'?'zh-CN':'en';
   document.documentElement.dataset.theme=state.theme;
   document.body.classList.toggle('browser',!native);
   document.title=`${t('name')} · ${t('subtitle')}`;
   $('#app').style.setProperty('--expanded-height',`${layouts[desiredLayout]}px`);
   const status = state.drag?t('release'):state.busy?`${t('busy')} ${state.progress}/${state.total}`:finished?(summary.failed?t('needsAttention'):t('readyDone')):state.files.length?`${state.files.length} ${t('files')}`:t('dropHere');
-  const note = family()==='data' ? 'dataNote' : allImages ? state.format==='pdf'?'imagePDFNote':['jpg','heic','bmp','gif'].includes(state.format)?'opaqueNote':'imageNote' : usable.some(f=>f.ext==='pdf') ? ['png','jpg'].includes(state.format)?'pdfImageNote':state.format==='docx'?'pdfWordNote':'pdfNote' : 'docsNote';
+  const note = motion ? (usable.every(f=>['mov','mp4','livephoto'].includes(f.ext.toLowerCase()))?'motionNote':'mixedMotionNote') : family()==='data' ? 'dataNote' : allImages ? state.format==='pdf'?'imagePDFNote':state.format==='gif'&&usable.some(f=>['heic','heif','jpg','jpeg'].includes(f.ext.toLowerCase()))?'liveStillNote':['jpg','heic','bmp','gif'].includes(state.format)?'opaqueNote':'imageNote' : usable.some(f=>f.ext==='pdf') ? ['png','jpg'].includes(state.format)?'pdfImageNote':state.format==='docx'?'pdfWordNote':'pdfNote' : 'docsNote';
   $('#app').innerHTML=`<section class="island ${state.expanded?'expanded':'compact'} ${empty?'is-empty':''} ${finished?'is-finished':''} ${state.drag?'drag-over':''} ${state.busy?'working':''}" data-layout="${desiredLayout}" aria-label="${t('name')}">
     <header class="island-header">
       <span class="signal ${finished?(summary.failed?'warning':'success'):''}" id="drag-handle" title="${t('move')}">${icon(state.busy?'refresh':finished&&summary.success?'check':'tray')}</span>
@@ -215,9 +243,9 @@ function render() {
     ${state.expanded?`<div class="expanded-content">
       ${empty?`<div class="empty-state"><span class="drop-symbol" aria-hidden="true">${icon('tray')}</span><h1>${t('emptyTitle')}</h1><p>${t('idleSub')}</p><button class="secondary-button" id="pick">${t(native?'pick':'preview')}</button></div>`:`
         <div class="file-list" aria-label="${t('queue')}">${state.files.map(fileRow).join('')}</div>
-        ${finished?`<div class="completion-row" role="status"><span>${t(summary.failed?(summary.success?'partialTitle':'failedTitle'):'doneTitle')}</span><span>${summary.success} ${t('success')}${summary.failed?` · ${summary.failed} ${t('failed')}`:''}</span></div>`:`
+        ${finished&&!showMotionOptions?`<div class="completion-row" role="status"><span>${t(summary.failed?(summary.success?'partialTitle':'failedTitle'):'doneTitle')}</span><span>${summary.success} ${t('success')}${summary.failed?` · ${summary.failed} ${t('failed')}`:''}</span></div>`:`
           <div class="format-row"><label for="format">${t('output')}</label><span class="format-control"><select id="format" ${!formats.length||state.busy?'disabled':''} aria-describedby="format-note">${formats.length?formats.map(format=>`<option value="${format}" ${state.format===format?'selected':''}>${t(format)}${format==='docx'?' (.docx)':''}</option>`).join(''):`<option>${t('selection')}</option>`}</select><span aria-hidden="true">${icon('down')}</span></span></div>
-          <p class="format-note" id="format-note">${t(formats.length?note:'noFormats')}</p>`}
+          <p class="format-note" id="format-note">${t(formats.length?note:'noFormats')}</p>${motion?motionControls():''}`}
         <div class="save-location" title="${t('destinationLabel')}: ${t('destination')}">${icon('folder')}<span>${t('destination')}</span></div>`}
       ${state.error?`<p class="error-banner" role="alert">${escape(message(state.error))}</p>`:''}
     </div>
@@ -254,7 +282,7 @@ async function action(fn) {
 async function choose() {
   if(state.busy) return;
   if(!native) {
-    ingest(state.files.length ? [...state.files, {id:'demo-design',name:'Design.png',ext:'png',size:1835720,formats:['png','jpg','heic','tiff','bmp','gif','pdf'],error:null}].filter((f,i,a)=>a.findIndex(x=>x.id===f.id)===i) : [{id:'demo-image',name:'Photo.heic',ext:'heic',size:624890,formats:['png','jpg','heic','tiff','bmp','gif','pdf'],error:null}]);
+    ingest(state.files.length ? [...state.files, {id:'demo-design',name:'Design.png',ext:'png',size:1835720,formats:['png','jpg','heic','tiff','bmp','gif','pdf'],error:null}].filter((f,i,a)=>a.findIndex(x=>x.id===f.id)===i) : [{id:'demo-motion',name:'Summer · Live Photo',ext:'livephoto',size:3624890,formats:['gif'],error:null}]);
     state.expanded=true; state.settings=false; render(); return;
   }
   state.picking=true;
@@ -265,7 +293,7 @@ async function convert() {
   if(state.busy||!native||!state.format)return;
   state.remembered[family()]=state.format;savePrefs();
   state.busy=true;state.progress=0;state.total=state.files.length;state.results=[];render();
-  try {state.results=await invoke('convert_files',{format:state.format});}
+  try {state.results=await invoke('convert_files',{format:state.format,...(hasMotion(state.files)&&state.format==='gif'?{gifOptions:state.gifOptions}:{})});}
   finally {state.busy=false;}
   render();
 }
@@ -302,6 +330,10 @@ function bind() {
     else{ingest(state.files.filter(f=>f.id!==button.dataset.remove));render();}
   }));
   document.querySelectorAll('[data-reveal]').forEach(button=>button.onclick=()=>action(()=>invoke('reveal_output',{id:button.dataset.reveal})));
+  for (const [id, key] of [['gif-size','maxDimension'],['gif-fps','fps']]) {
+    if($(`#${id}`))$(`#${id}`).onchange=event=>{state.gifOptions[key]=Number(event.target.value);savePrefs();};
+  }
+  if($('#gif-loop'))$('#gif-loop').onchange=event=>{state.gifOptions.loop=event.target.checked;savePrefs();};
   if($('#format'))$('#format').onchange=event=>{state.format=event.target.value;render();$('#format')?.focus({preventScroll:true});};
   if($('#reveal-primary'))$('#reveal-primary').onclick=()=>action(()=>invoke('reveal_output',{id:state.results.find(result=>result.ok).id}));
   if($('#clear'))$('#clear').onclick=()=>action(async()=>{if(native)await invoke('clear_files');ingest([]);state.results=[];render();});

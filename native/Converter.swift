@@ -5,20 +5,37 @@ import PDFKit
 import CoreGraphics
 import CoreText
 import UniformTypeIdentifiers
+import AVFoundation
 import zlib
 
 // A one-request process: no clipboard, preferences, network, or persistent cache.
-struct Request: Decodable { let input: String; let output: String; let format: String }
+struct GIFOptions: Decodable {
+    let maxDimension: Int?
+    let fps: Int?
+    let loop: Bool?
+    enum CodingKeys: String, CodingKey { case maxDimension, fps, loop }
+    init(from decoder: Decoder) throws {
+        do {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            maxDimension = try values.decodeIfPresent(Int.self, forKey: .maxDimension)
+            fps = try values.decodeIfPresent(Int.self, forKey: .fps)
+            loop = try values.decodeIfPresent(Bool.self, forKey: .loop)
+        } catch { throw ConversionError(code: "invalidGifOptions") }
+    }
+}
+struct Request: Decodable { let input: String; let output: String; let format: String; let gifOptions: GIFOptions? }
 struct Reply: Encodable { let ok: Bool; var error: String?; var warning: String? }
 struct ConversionError: Error { let code: String }
 func fail(_ code: String) throws -> Never { throw ConversionError(code: code) }
 
 let documentLimit = 20 * 1024 * 1024
 let imageLimit = 50 * 1024 * 1024
+let videoLimit = 100 * 1024 * 1024
 let textLimit = 200_000
 let pixelLimit = 40_000_000
 let pageLimit = 100
 let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "webp", "heic", "heif", "tif", "tiff", "bmp", "gif"]
+let videoExtensions: Set<String> = ["mov", "mp4"]
 let documentExtensions: Set<String> = ["txt", "md", "docx", "pdf"]
 let imageDestinationTypes = ["png": "public.png", "jpg": "public.jpeg", "heic": "public.heic", "tiff": "public.tiff", "bmp": "com.microsoft.bmp", "gif": "com.compuserve.gif"]
 let documentOutputFormats: Set<String> = ["txt", "md", "pdf", "docx", "rtf", "html"]
@@ -834,6 +851,115 @@ func imageOutput(_ url: URL, format: String, warnings: inout [String]) throws ->
     try encodeImage(loadImage(url, warnings: &warnings), format: format, warnings: &warnings)
 }
 
+final class GIFByteSink {
+    var data = Data()
+    var exceeded = false
+    let limit = 50 * 1024 * 1024
+}
+
+// Load only metadata before decoding. External references in reference movies
+// are forbidden, including local references outside the selected input file.
+final class VideoMetadataResult<T>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<T, Error>?
+    func store(_ value: Result<T, Error>) { lock.lock(); result = value; lock.unlock() }
+    func take() -> Result<T, Error> { lock.lock(); defer { lock.unlock() }; return result! }
+}
+func loadVideoMetadata<T>(_ action: @escaping @Sendable () async throws -> T) throws -> T {
+    let ready = DispatchSemaphore(value: 0), box = VideoMetadataResult<T>()
+    let task = Task.detached {
+        do { box.store(.success(try await action())) }
+        catch { box.store(.failure(error)) }
+        ready.signal()
+    }
+    guard ready.wait(timeout: .now() + 15) == .success else { task.cancel(); try fail("videoMetadataTimeout") }
+    do { return try box.take().get() }
+    catch let error as ConversionError { throw error }
+    catch { try fail("invalidVideo") }
+}
+
+func videoGIFOutput(_ url: URL, options: GIFOptions?, warnings: inout [String]) throws -> Data {
+    let dimension = options?.maxDimension ?? 480, fps = options?.fps ?? 15, loop = options?.loop ?? true
+    guard [320, 480, 640].contains(dimension), [10, 15, 20].contains(fps) else { try fail("invalidGifOptions") }
+    let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true, AVURLAssetReferenceRestrictionsKey: AVAssetReferenceRestrictions.forbidAll.rawValue])
+    defer { asset.cancelLoading() }
+    let metadata = try loadVideoMetadata {
+        guard try await !asset.load(.hasProtectedContent) else { try fail("videoProtected") }
+        guard let track = try await asset.loadTracks(withMediaType: .video).first else { try fail("videoNoTrack") }
+        guard try await asset.load(.isPlayable) else { try fail("invalidVideo") }
+        return try await (asset.load(.duration), track.load(.naturalSize), track.load(.preferredTransform), !asset.loadTracks(withMediaType: .audio).isEmpty)
+    }
+    let duration = CMTimeGetSeconds(metadata.0)
+    guard duration.isFinite, duration > 0 else { try fail("invalidVideo") }
+    guard duration <= 15.000_001 else { try fail("videoTooLong") }
+    guard duration >= 0.04 else { try fail("videoTooShort") }
+    let natural = metadata.1, transform = metadata.2
+    guard natural.width.isFinite, natural.height.isFinite, natural.width > 0, natural.height > 0, natural.width * natural.height <= CGFloat(pixelLimit), finitePDFTransform(transform) else { try fail("gifResourceLimit") }
+    let display = CGRect(origin: .zero, size: natural).applying(transform).standardized
+    guard finitePDFRect(display), display.width >= 1, display.height >= 1 else { try fail("invalidVideo") }
+    let scale = min(1, CGFloat(dimension) / max(display.width, display.height))
+    let width = max(1, Int((display.width * scale).rounded(.down))), height = max(1, Int((display.height * scale).rounded(.down)))
+    let totalCentiseconds = Int((duration * 100).rounded())
+    var frames = max(2, Int(ceil(duration * Double(fps) - 0.000_001)))
+    // GIF timing has hundredth-second precision. Distribute rounding at frame
+    // boundaries and fold a <20ms final remainder into the preceding frame.
+    if frames > 2 && totalCentiseconds - Int((Double(frames - 1) * 100 / Double(fps)).rounded()) < 2 { frames -= 1 }
+    guard frames <= 300, width * height <= 125_000_000 / frames else { try fail("gifResourceLimit") }
+    let boundaries = (0...frames).map { index in
+        index == frames ? totalCentiseconds : frames == 2 && duration < 2 / Double(fps) ? Int((Double(index) * Double(totalCentiseconds) / 2).rounded()) : Int((Double(index) * 100 / Double(fps)).rounded())
+    }
+    guard zip(boundaries, boundaries.dropFirst()).allSatisfy({ $1 > $0 }) else { try fail("videoTooShort") }
+    let generator = AVAssetImageGenerator(asset: asset)
+    generator.appliesPreferredTrackTransform = true
+    generator.maximumSize = CGSize(width: width, height: height)
+    // Exact requested times select the containing decoded frame without seeking
+    // to an earlier keyframe; only the current CGImage is retained by our code.
+    generator.requestedTimeToleranceBefore = .zero
+    generator.requestedTimeToleranceAfter = .zero
+    defer { generator.cancelAllCGImageGeneration() }
+    let sink = GIFByteSink()
+    var callbacks = CGDataConsumerCallbacks(putBytes: { info, bytes, count in
+        guard let info else { return 0 }
+        let sink = Unmanaged<GIFByteSink>.fromOpaque(info).takeUnretainedValue()
+        guard count <= sink.limit - sink.data.count else { sink.exceeded = true; return 0 }
+        sink.data.append(bytes.assumingMemoryBound(to: UInt8.self), count: count)
+        return count
+    }, releaseConsumer: { info in
+        if let info { Unmanaged<GIFByteSink>.fromOpaque(info).release() }
+    })
+    let sinkInfo = Unmanaged.passRetained(sink).toOpaque()
+    guard let consumer = CGDataConsumer(info: sinkInfo, cbks: &callbacks) else {
+        Unmanaged<GIFByteSink>.fromOpaque(sinkInfo).release(); try fail("encoderUnavailable")
+    }
+    guard let destination = CGImageDestinationCreateWithDataConsumer(consumer, UTType.gif.identifier as CFString, frames, nil) else { try fail("encoderUnavailable") }
+    if loop { CGImageDestinationSetProperties(destination, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFLoopCount: 0]] as CFDictionary) }
+    for index in 0..<frames {
+        try autoreleasepool {
+            let seconds = Double(boundaries[index]) / 100
+            let original: CGImage
+            do { original = try generator.copyCGImage(at: CMTime(seconds: seconds, preferredTimescale: 60_000), actualTime: nil) }
+            catch { try fail("videoDecodeFailed") }
+            guard original.width * original.height <= pixelLimit else { try fail("gifResourceLimit") }
+            // Normalize color/alpha and exact output dimensions after AVFoundation
+            // applies orientation; no frame array or full-video data is allocated.
+            guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { try fail("conversionFailed") }
+            let bounds = CGRect(x: 0, y: 0, width: width, height: height)
+            context.setFillColor(CGColor(gray: 1, alpha: 1)); context.fill(bounds)
+            context.interpolationQuality = .high; context.draw(original, in: bounds)
+            guard let frame = context.makeImage() else { try fail("conversionFailed") }
+            let delay = Double(boundaries[index + 1] - boundaries[index]) / 100
+            CGImageDestinationAddImage(destination, frame, [kCGImagePropertyGIFDictionary: [kCGImagePropertyGIFDelayTime: delay, kCGImagePropertyGIFUnclampedDelayTime: delay]] as CFDictionary)
+            guard !sink.exceeded else { try fail("gifResourceLimit") }
+        }
+    }
+    let finished = CGImageDestinationFinalize(destination)
+    guard !sink.exceeded else { try fail("gifResourceLimit") }
+    guard finished, !sink.data.isEmpty else { try fail("conversionFailed") }
+    warnings.append("animatedGifLossy")
+    if metadata.3 { warnings.append("videoAudioRemoved") }
+    return sink.data
+}
+
 func pdfImageOutput(_ url: URL, format: String, warnings: inout [String]) throws -> Data {
     guard let document = CGPDFDocument(url as CFURL) else { try fail("invalidInput") }
     guard document.isUnlocked else { try fail("passwordProtected") }
@@ -860,16 +986,18 @@ func convert(_ request: Request) throws -> Reply {
     guard input.standardizedFileURL != output.standardizedFileURL, !FileManager.default.fileExists(atPath: output.path) else { try fail("outputExists") }
     let ext = input.pathExtension.lowercased()
     let image = imageExtensions.contains(ext)
+    let video = videoExtensions.contains(ext)
     let table = tableFormats.contains(ext)
-    guard image || documentExtensions.contains(ext) || table else { try fail("unsupportedInput") }
-    let formats: Set<String> = table ? tableFormats : image ? Set(imageDestinationTypes.keys).union(["pdf"]) : ext == "pdf" ? documentOutputFormats.subtracting(["pdf"]).union(["png", "jpg"]) : documentOutputFormats
+    guard image || video || documentExtensions.contains(ext) || table else { try fail("unsupportedInput") }
+    let formats: Set<String> = video ? ["gif"] : table ? tableFormats : image ? Set(imageDestinationTypes.keys).union(["pdf"]) : ext == "pdf" ? documentOutputFormats.subtracting(["pdf"]).union(["png", "jpg"]) : documentOutputFormats
     guard formats.contains(request.format) else { try fail("unsupportedConversion") }
     let values = try input.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
     guard values.isRegularFile == true, let size = values.fileSize else { try fail("invalidInput") }
-    guard size <= (image ? imageLimit : documentLimit) else { try fail("inputTooLarge") }
+    guard size <= (video ? videoLimit : image ? imageLimit : documentLimit) else { try fail("inputTooLarge") }
     var warnings: [String] = []
     let data: Data
-    if table { data = try tableOutput(input, ext: ext, format: request.format, warnings: &warnings) }
+    if video { data = try videoGIFOutput(input, options: request.gifOptions, warnings: &warnings) }
+    else if table { data = try tableOutput(input, ext: ext, format: request.format, warnings: &warnings) }
     else if image { data = try imageOutput(input, format: request.format, warnings: &warnings) }
     else if ext == "pdf" && ["png", "jpg"].contains(request.format) { data = try pdfImageOutput(input, format: request.format, warnings: &warnings) }
     else if ext == "pdf" && request.format == "docx" {

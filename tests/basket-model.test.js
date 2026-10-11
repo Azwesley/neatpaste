@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { availableFormats, selectFormat, summarizeResults, fileSize, quickFormat } from '../src/basket-model.js';
+import { availableFormats, selectFormat, summarizeResults, fileSize, quickFormat, conversionFamily, hasMotion, gifOptions } from '../src/basket-model.js';
 
 const image={id:'1',formats:['png','jpg','pdf'],error:null};
 const document={id:'2',formats:['txt','pdf','docx'],error:null};
@@ -41,4 +41,22 @@ test('expanded PDF and table routes remain separate and PDF defaults to text ref
   assert.equal(selectFormat([pdf],null),'docx');
   assert.deepEqual(availableFormats([pdf,table]),[]);
   assert.deepEqual(availableFormats([table]),['csv','tsv','json']);
+});
+test('motion batches select GIF and keep their quick conversion preference separate from still images',()=>{
+  const live={id:'live',ext:'livephoto',formats:['gif']};
+  const video={id:'video',ext:'MOV',formats:['gif']};
+  const still={id:'still',ext:'heic',formats:['png','gif']};
+  assert.equal(selectFormat([live,video],'png'),'gif');
+  assert.equal(conversionFamily([live,video]),'motion');
+  assert.equal(quickFormat([video],new Set(),{quick:true,remembered:{image:'gif'}}),null);
+  assert.equal(quickFormat([video],new Set(),{quick:true,remembered:{motion:'gif'}}),'gif');
+  assert.equal(conversionFamily([live,still]),'mixed');
+  assert.equal(hasMotion([still]),false);
+  assert.equal(hasMotion([video,still]),true);
+  assert.equal(hasMotion([{...video,error:'invalidInput'}]),false);
+});
+test('stored GIF settings recover from invalid preferences without changing supported choices',()=>{
+  assert.deepEqual(gifOptions(null),{maxDimension:480,fps:15,loop:true});
+  assert.deepEqual(gifOptions({maxDimension:640,fps:20,loop:false}),{maxDimension:640,fps:20,loop:false});
+  assert.deepEqual(gifOptions({maxDimension:Infinity,fps:'15',loop:'false'}),{maxDimension:480,fps:15,loop:true});
 });

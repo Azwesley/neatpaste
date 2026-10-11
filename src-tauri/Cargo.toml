@@ -1,6 +1,6 @@
 [package]
 name = "neatpaste"
-version = "0.5.0"
+version = "0.6.0"
 description = "A compact desktop island for local file conversion"
 authors = ["NeatPaste contributors"]
 edition = "2021"
