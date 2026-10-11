@@ -905,8 +905,19 @@ func videoGIFOutput(_ url: URL, options: GIFOptions?, warnings: inout [String]) 
     // boundaries and fold a <20ms final remainder into the preceding frame.
     if frames > 2 && totalCentiseconds - Int((Double(frames - 1) * 100 / Double(fps)).rounded()) < 2 { frames -= 1 }
     guard frames <= 300, width * height <= 125_000_000 / frames else { try fail("gifResourceLimit") }
-    let boundaries = (0...frames).map { index in
-        index == frames ? totalCentiseconds : frames == 2 && duration < 2 / Double(fps) ? Int((Double(index) * Double(totalCentiseconds) / 2).rounded()) : Int((Double(index) * 100 / Double(fps)).rounded())
+    var boundaries: [Int] = []
+    let frameRate = Double(fps)
+    let splitShortClip = frames == 2 && duration < 2.0 / frameRate
+    for index in 0...frames {
+        if index == frames {
+            boundaries.append(totalCentiseconds)
+        } else if splitShortClip {
+            let boundary = Double(index) * Double(totalCentiseconds) / 2.0
+            boundaries.append(Int(boundary.rounded()))
+        } else {
+            let boundary = Double(index) * 100.0 / frameRate
+            boundaries.append(Int(boundary.rounded()))
+        }
     }
     guard zip(boundaries, boundaries.dropFirst()).allSatisfy({ $1 > $0 }) else { try fail("videoTooShort") }
     let generator = AVAssetImageGenerator(asset: asset)
