@@ -4,14 +4,14 @@
 
 [English](README.md) · [安装](docs/INSTALL.md) · [验证记录](docs/VALIDATION.md) · [设计](docs/DESIGN.md)
 
-<img src="docs/assets/neatpaste-v042-native.jpg" width="208" alt="NeatPaste v0.4.2 native desktop capsule" />
+<img src="docs/assets/neatpaste-v042-native.jpg" width="208" alt="NeatPaste v0.4.3 native desktop capsule" />
 
 <details><summary>磨砂玻璃界面 / Frosted glass interface</summary>
 <img src="docs/assets/neatpaste-v042-light.jpg" width="332" alt="Native translucent light appearance" />
 <img src="docs/assets/neatpaste-v042-ready.jpg" width="332" alt="Native image format selection" />
 </details>
 
-v0.4.2 平时是一枚停在屏幕顶部的深色胶囊，实际图形约 **196 × 36 点**。直接从桌面或 Finder 拖入文件，展开后选择输出格式。结果存入原文件旁的「轻贴导出」，原件不动，重名自动编号。
+v0.4.3 平时是一枚停在屏幕顶部的深色胶囊，实际图形约 **196 × 36 点**。直接从桌面或 Finder 拖入文件，展开后选择输出格式。结果存入原文件旁的「轻贴导出」，原件不动，重名自动编号。
 
 这版参考苹果的 [AirDrop 与界面材质规范](docs/REFERENCES.md)，采用系统字体、蓝色操作按钮和格式下拉菜单。展开窗口随内容调整：空态 332 × 228 点，单文件 332 × 272 点。
 
@@ -48,11 +48,11 @@ DOCX 仅提取正文，不保留页眉、脚注、图片、表格版式。Markdo
 - 文字最多 200,000 个 UTF-16 单元，PDF 最多 100 页，表格最多 50,000 单元格；DOCX 解压后最多 40 MiB / 2,000 条目。
 - 每个转换助手最多运行 120 秒。导出目录需有写入权限及剩余空间。
 
-当前实测与限制见[验证记录](docs/VALIDATION.md)。不把旧版内存数据用于 v0.4.2。
+当前实测与限制见[验证记录](docs/VALIDATION.md)。不把旧版内存数据用于 v0.4.3。
 
 ## 安装与源码
 
-本地包 `NeatPaste-v0.4.2-macOS-arm64.zip` 适用于 **M 系列芯片、macOS 13.3+**。解压，把 `NeatPaste.app` 放入「应用程序」。应用经过本地 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。Windows 后续再做；Intel 提供构建工作流，但未实机验证。
+本地包 `NeatPaste-v0.4.3-macOS-arm64.zip` 适用于 **M 系列芯片、macOS 13.3+**。解压，把 `NeatPaste.app` 放入「应用程序」。应用经过本地 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。Windows 后续再做；Intel 提供构建工作流，但未实机验证。
 
 开发需 Node.js 22.12+、Rust 1.90+、Xcode Command Line Tools。项目可直接上传 GitHub，保留 `.github` 等隐藏文件。
 

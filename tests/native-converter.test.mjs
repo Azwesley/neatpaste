@@ -147,7 +147,7 @@ if CommandLine.arguments[1] == "create" {
 
 after(() => { if (directory) rmSync(directory, { recursive: true, force: true }); });
 
-test('Chinese UTF-8 text survives PDF text extraction and plain DOCX round trips', { skip: !supported }, () => {
+test('Chinese text survives PDF extraction and DOCX preserves exact Unicode', { skip: !supported }, () => {
   const input = join(directory, '中文原文.txt');
   const text = '轻贴文件篮\n你好，世界！\nA useful local tool.\n第三段：保留中文 & <符号>。';
   writeFileSync(input, text);
@@ -157,7 +157,10 @@ test('Chinese UTF-8 text survives PDF text extraction and plain DOCX round trips
   assert.equal(readFileSync(pdf.output).subarray(0, 5).toString(), '%PDF-');
   const pdfText = convert(pdf.output, 'txt');
   assert.equal(pdfText.ok, true, pdfText.error);
-  assert.equal(readFileSync(pdfText.output, 'utf8').replace(/\s/g, ''), text.replace(/\s/g, ''));
+  // macOS 14 PDFKit extracts these two fullwidth glyphs as their ASCII forms.
+  // Permit only those observed PDF glyph mappings; do not normalize source/DOCX.
+  const pdfComparable = value => value.replace(/！/g, '!').replace(/：/g, ':').replace(/\s/g, '');
+  assert.equal(pdfComparable(readFileSync(pdfText.output, 'utf8')), pdfComparable(text));
   const docx = convert(input, 'docx');
   assert.equal(docx.ok, true, docx.error);
   assert.equal(readFileSync(docx.output).subarray(0, 2).toString(), 'PK');
@@ -174,10 +177,32 @@ test('text decoding accepts BOM-tagged UTF-16 and rejects invalid bytes without 
   const result = convert(input, 'txt');
   assert.equal(result.ok, true, result.error);
   assert.equal(readFileSync(result.output, 'utf8'), '你好\nHello');
-  writeFileSync(input, Buffer.from([0xff, 0xfe, 0x00, 0xd8]));
-  assert.equal(convert(input, 'txt').error, 'invalidEncoding');
-  writeFileSync(input, Buffer.from([0xc3, 0x28]));
-  assert.equal(convert(input, 'txt').error, 'invalidEncoding');
+  const malformed = [
+    [0xff, 0xfe, 0x00, 0xd8], // UTF-16LE unpaired high surrogate (macOS 14 regression).
+    [0xff, 0xfe, 0x00, 0xdc], // UTF-16LE unpaired low surrogate.
+    [0xfe, 0xff, 0xd8, 0x00], // UTF-16BE unpaired high surrogate.
+    [0xfe, 0xff, 0xdc, 0x00], // UTF-16BE unpaired low surrogate.
+    [0xff, 0xfe, 0x00, 0xd8, 0x41, 0x00], // High surrogate followed by plain text.
+    [0xff, 0xfe, 0x41], // Truncated UTF-16 code unit.
+    [0xc3, 0x28], // UTF-8 invalid continuation.
+    [0xe2, 0x82], // UTF-8 truncated sequence.
+    [0xc0, 0xaf], // UTF-8 overlong sequence.
+    [0xed, 0xa0, 0x80], // UTF-8 encoded surrogate.
+    [0xf4, 0x90, 0x80, 0x80], // Beyond Unicode U+10FFFF.
+    [0x80], // Stray continuation byte.
+  ];
+  for (const bytes of malformed) {
+    writeFileSync(input, Buffer.from(bytes));
+    assert.equal(convert(input, 'txt').error, 'invalidEncoding', Buffer.from(bytes).toString('hex'));
+  }
+  // A literal replacement character is legitimate content, unlike decoder repair.
+  const exact = '你好😀\uFFFD！：';
+  for (const bytes of [Buffer.from(exact), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(exact, 'utf16le')]), Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from(exact, 'utf16le').swap16()])]) {
+    writeFileSync(input, bytes);
+    const decoded = convert(input, 'txt');
+    assert.equal(decoded.ok, true, decoded.error);
+    assert.equal(readFileSync(decoded.output, 'utf8'), exact);
+  }
 });
 
 test('Markdown conversion makes literal syntax explicit', { skip: !supported }, () => {

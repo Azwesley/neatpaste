@@ -1,6 +1,6 @@
 # Contributing
 
-NeatPaste v0.4.2 is a small, local Mac conversion island. Improvements should preserve a short interaction: drop files, choose a supported output, convert, and find the result.
+NeatPaste v0.4.3 is a small, local Mac conversion island. Improvements should preserve a short interaction: drop files, choose a supported output, convert, and find the result.
 
 ## Develop
 
@@ -38,6 +38,6 @@ Measure a release build and record the OS, hardware, version, input dimensions o
 
 ## Scope
 
-Version 0.4.2 targets macOS; Windows is deferred. Cloud conversion, folder watching, clipboard history, OCR, PDF-to-Word layout reconstruction, and large office runtimes are outside the current design. See [the design notes](docs/DESIGN.md).
+Version 0.4.3 targets macOS; Windows is deferred. Cloud conversion, folder watching, clipboard history, OCR, PDF-to-Word layout reconstruction, and large office runtimes are outside the current design. See [the design notes](docs/DESIGN.md).
 
 Contributions are accepted under [MIT](LICENSE).

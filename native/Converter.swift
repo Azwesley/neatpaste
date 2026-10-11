@@ -31,16 +31,24 @@ func checkedText(_ text: String) throws -> String {
 }
 
 func decodedText(_ data: Data) throws -> String {
-    let bytes = [UInt8](data.prefix(3))
+    let bytes = [UInt8](data.prefix(2))
     let text: String?
-    if bytes.starts(with: [0xFF, 0xFE]) {
+    if bytes == [0xFF, 0xFE] || bytes == [0xFE, 0xFF] {
         guard data.count % 2 == 0 else { try fail("invalidEncoding") }
-        text = String(data: data.dropFirst(2), encoding: .utf16LittleEndian)
-    } else if bytes.starts(with: [0xFE, 0xFF]) {
-        guard data.count % 2 == 0 else { try fail("invalidEncoding") }
-        text = String(data: data.dropFirst(2), encoding: .utf16BigEndian)
+        let littleEndian = bytes[0] == 0xFF
+        let units: [UInt16] = stride(from: 2, to: data.count, by: 2).map { offset in
+            let first = UInt16(data[offset]), second = UInt16(data[offset + 1])
+            return littleEndian ? first | (second << 8) : (first << 8) | second
+        }
+        // Foundation repairs invalid surrogate sequences on some macOS versions.
+        // A code-unit round trip rejects any repair, including on macOS 13/14.
+        let decoded = String(decoding: units, as: UTF16.self)
+        guard decoded.utf16.elementsEqual(units) else { try fail("invalidEncoding") }
+        text = decoded
     } else {
-        text = String(data: data, encoding: .utf8)
+        let decoded = String(decoding: data, as: UTF8.self)
+        guard decoded.utf8.elementsEqual(data) else { try fail("invalidEncoding") }
+        text = decoded
     }
     guard var result = text, !result.contains("\0") else { try fail("invalidEncoding") }
     if result.first == "\u{FEFF}" { result.removeFirst() }

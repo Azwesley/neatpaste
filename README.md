@@ -11,7 +11,7 @@
 <img src="docs/assets/neatpaste-v042-empty-en.jpg" width="332" alt="Translucent file drop panel" />
 </details>
 
-Version 0.4.2 rests in a dark **196 × 36-point capsule** near the top of the screen. Drop files from Finder or the desktop, choose a format, and find the result next to the original in `轻贴导出`. Originals and existing exports are never overwritten.
+Version 0.4.3 rests in a dark **196 × 36-point capsule** near the top of the screen. Drop files from Finder or the desktop, choose a format, and find the result next to the original in `轻贴导出`. Originals and existing exports are never overwritten.
 
 This version follows [Apple’s AirDrop and material guidance](docs/REFERENCES.md), with system typography, blue action buttons and a format popup. The window adapts to its content: 332 × 228 points when empty, 332 × 272 with one file.
 
@@ -46,11 +46,11 @@ Tauri 2 and Rust use the system WebView. A Swift helper starts per conversion an
 
 Limits: 10 sequential files, 50 MiB per image, 20 MiB per document/table, 40 megapixels, 200,000 UTF-16 text units, 100 PDF pages, and 50,000 table cells. DOCX expansion is limited to 40 MiB and 2,000 ZIP entries. Each helper job has a 120-second timeout. The output directory must be writable with space available.
 
-See [validation](docs/VALIDATION.md) for current measurements and device-test boundaries. Earlier resource measurements do not establish v0.4.2 performance.
+See [validation](docs/VALIDATION.md) for current measurements and device-test boundaries. Earlier resource measurements do not establish v0.4.3 performance.
 
 ## Install and develop
 
-[Download NeatPaste v0.4.2 for Mac](https://github.com/gnpwvm28mg-eng/neatpaste/releases/download/v0.4.2/NeatPaste-v0.4.2-macOS-arm64.zip). The app requires **Apple Silicon and macOS 13.3+**. Unzip and move the app to Applications. The local package is ad-hoc signed, without Developer ID signing or Apple notarization. Windows is deferred. Intel build support is provided, but not device-validated.
+[Download NeatPaste v0.4.3 for Mac](https://github.com/gnpwvm28mg-eng/neatpaste/releases/download/v0.4.3/NeatPaste-v0.4.3-macOS-arm64.zip). The app requires **Apple Silicon and macOS 13.3+**. Unzip and move the app to Applications. The local package is ad-hoc signed, without Developer ID signing or Apple notarization. Windows is deferred. Intel build support is provided, but not device-validated.
 
 Development requires Node.js 22.12+, Rust 1.90+, and Xcode Command Line Tools.
 

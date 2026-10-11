@@ -181,7 +181,7 @@ function settingsContent() {
       <button class="park-button" id="park" ${!native?'disabled':''}>${t('park')}${icon('up')}</button>
       <p class="shortcut-status">${t(state.shortcut?.available?'shortcutOkay':native?'shortcutFailed':'previewLabel')}</p>
       <details><summary>${t('supportTitle')}</summary><p>${t('support')}</p><p>${t('privacy')}</p></details>
-      <footer><span>NeatPaste</span><span>0.4.2</span></footer>
+      <footer><span>NeatPaste</span><span>0.4.3</span></footer>
     </div>
   </dialog>`;
 }

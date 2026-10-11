@@ -1,8 +1,8 @@
-# Install NeatPaste v0.4.2
+# Install NeatPaste v0.4.3
 
 Requires Apple Silicon (M-series) and macOS 13.3 or later. Windows is planned for a later release. Intel builds are available through the build workflow but have not been validated on Intel hardware.
 
-1. Download `NeatPaste-v0.4.2-macOS-arm64.zip` from [GitHub Releases](https://github.com/gnpwvm28mg-eng/neatpaste/releases/latest).
+1. Download `NeatPaste-v0.4.3-macOS-arm64.zip` from [GitHub Releases](https://github.com/gnpwvm28mg-eng/neatpaste/releases/latest).
 2. Unzip it and move `NeatPaste.app` to Applications.
 3. Open the app. Drop a file onto the small capsule near the top of the screen, or click the capsule and choose **Choose Files…**.
 4. Pick a format, click **Convert**, then **Show in Finder**.

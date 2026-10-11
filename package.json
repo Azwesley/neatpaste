@@ -1,6 +1,6 @@
 {
   "name": "neatpaste",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "private": true,
   "description": "A small desktop island for local file conversion on macOS.",
   "type": "module",
