@@ -1,5 +1,7 @@
 # v0.5.0 PDF-to-Word validation
 
+Historical record: links below refer to the original repository and its past CI runs. The current repository is [Azwesley/neatpaste](https://github.com/Azwesley/neatpaste).
+
 Date: 2026-10-11. Local checks ran on macOS 26.6.2 (25G83), Apple Silicon. The compact UI from [v0.4.2](VALIDATION-v0.4.2.md) and strict text decoding from [v0.4.3](VALIDATION-v0.4.3.md) are retained.
 
 ## Result

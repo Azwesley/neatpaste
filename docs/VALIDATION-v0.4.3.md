@@ -1,5 +1,7 @@
 # v0.4.3 compatibility validation
 
+Historical record: links below refer to the original repository and its past CI runs. The current repository is [Azwesley/neatpaste](https://github.com/Azwesley/neatpaste).
+
 Date: 2026-10-11. Local tests ran on macOS 26.6.2 (25G83), Apple Silicon. This patch retains the compact interface from [v0.4.2](VALIDATION-v0.4.2.md) and fixes a text-decoding difference discovered by GitHub's macOS 14 runner during initial publication.
 
 ## Compatibility fix

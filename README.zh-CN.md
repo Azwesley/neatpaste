@@ -76,7 +76,7 @@ JSON 表格采用二维**字符串**数组，例如 `[["姓名","编号"],["小�
 
 ## 安装与源码
 
-[下载 NeatPaste v0.6.0 Mac 版](https://github.com/gnpwvm28mg-eng/neatpaste/releases/download/v0.6.0/NeatPaste-v0.6.0-macOS-arm64.zip)，适用于 **M 系列芯片、macOS 13.3+**。解压，把 `NeatPaste.app` 放入「应用程序」。应用经过本地 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。Windows 后续再做；Intel 提供构建工作流，但未实机验证。
+[下载 NeatPaste v0.6.0 Mac 版](https://github.com/Azwesley/neatpaste/releases/download/v0.6.0/NeatPaste-v0.6.0-macOS-arm64.zip)，适用于 **M 系列芯片、macOS 13.3+**。解压，把 `NeatPaste.app` 放入「应用程序」。应用经过本地 ad-hoc 签名，尚无 Developer ID 签名或 Apple 公证。Windows 后续再做；Intel 提供构建工作流，但未实机验证。
 
 开发需 Node.js 22.12+、Rust 1.90+、Xcode Command Line Tools。项目可直接上传 GitHub，保留 `.github` 等隐藏文件。
 

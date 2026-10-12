@@ -2,7 +2,7 @@
 
 **Drop into the island. Pick a new format.** A small, local file converter for Mac.
 
-[Download for Mac](https://github.com/gnpwvm28mg-eng/neatpaste/releases/latest) · [简体中文](README.zh-CN.md) · [Install](docs/INSTALL.md) · [Validation](docs/VALIDATION.md) · [Design](docs/DESIGN.md)
+[Download for Mac](https://github.com/Azwesley/neatpaste/releases/latest) · [简体中文](README.zh-CN.md) · [Install](docs/INSTALL.md) · [Validation](docs/VALIDATION.md) · [Design](docs/DESIGN.md)
 
 <img src="docs/assets/neatpaste-v042-english.jpg" width="332" alt="NeatPaste running on macOS: converted file and Show in Finder action" />
 
@@ -73,7 +73,7 @@ See [validation](docs/VALIDATION.md) for current measurements and device-test bo
 
 ## Install and develop
 
-[Download NeatPaste v0.6.0 for Mac](https://github.com/gnpwvm28mg-eng/neatpaste/releases/download/v0.6.0/NeatPaste-v0.6.0-macOS-arm64.zip). The app requires **Apple Silicon and macOS 13.3+**. Unzip and move the app to Applications. The local package is ad-hoc signed, without Developer ID signing or Apple notarization. Windows is deferred. Intel build support is provided, but not device-validated.
+[Download NeatPaste v0.6.0 for Mac](https://github.com/Azwesley/neatpaste/releases/download/v0.6.0/NeatPaste-v0.6.0-macOS-arm64.zip). The app requires **Apple Silicon and macOS 13.3+**. Unzip and move the app to Applications. The local package is ad-hoc signed, without Developer ID signing or Apple notarization. Windows is deferred. Intel build support is provided, but not device-validated.
 
 Development requires Node.js 22.12+, Rust 1.90+, and Xcode Command Line Tools.
 

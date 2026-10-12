@@ -9,7 +9,7 @@ MOV and MP4 use AVFoundation decoding and ImageIO GIF encoding. Output includes 
 - Frontend model: **9 tests passed**; JavaScript syntax and production Vite build passed. Tests cover motion format intersection, separate quick-conversion family and recovery from invalid saved GIF settings.
 - Rust host: **26 tests passed**, formatting and strict Clippy passed. New coverage includes explicit pairing, ambiguity and directory/intake boundaries, pair counting before the queue limit, companion deduplication, 100 MiB input limits, strict option validation and helper JSON. Completion layout survives collapse and settings visits; all-failed motion batches retain their retry controls.
 - Swift helper: **26 integration tests passed**. New groups exercise real H.264 and HEVC, MOV and MP4, changing frame pixels, orientation and its asymmetric marker, loop metadata, final-frame delays, audio removal, 15-second/300-frame boundaries and rejected damaged, audio-only, oversized and invalid-option inputs. The existing static-image and document suites, including PDF pictures embedded in editable DOCX, remain passing.
-- Release app build passed. GitHub CI runs the frontend on Linux and Rust/Swift checks on macOS 14; current runs are available in [Actions](https://github.com/gnpwvm28mg-eng/neatpaste/actions).
+- Release app build passed. GitHub CI runs the frontend on Linux and Rust/Swift checks on macOS 14; current runs are available in [Actions](https://github.com/Azwesley/neatpaste/actions).
 
 ## Animation and interface checks
 
